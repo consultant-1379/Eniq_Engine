@@ -1,0 +1,13 @@
+src.url = jdbc:sybase:Tds:sol2:2641
+src.userName = dwhrep
+src.password = dwhrep
+src.dbDriverName = com.sybase.jdbc3.jdbc.SybDriver
+src.setupTables = Versioning,StorageInfo,PhysicalTable,MeasurementData,ReferenceType,ReferenceData,DuplicateMonitoring
+src.cleanTables = ""
+
+tgt.url = jdbc:sybase:Tds:sol7:2641
+tgt.userName = dwhrep
+tgt.password = dwhrep
+tgt.dbDriverName = com.sybase.jdbc3.jdbc.SybDriver
+tgt.setupTables = Versioning,StorageInfo,PhysicalTable,MeasurementData,ReferenceType,ReferenceData,DuplicateMonitoring
+tgt.cleanTables = ""

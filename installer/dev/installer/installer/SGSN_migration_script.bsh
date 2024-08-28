@@ -1,0 +1,411 @@
+#!/bin/sh
+# ----------------------------------------------------------------------
+# Ericsson Network IQ Migration script for SGSN from Eniq 1.x to Eniq 2.5
+# ----------------------------------------------------------------------
+# Copyright (c) 1999 - 2007 AB LM Ericsson Oy  All rights reserved.
+# ----------------------------------------------------------------------
+# This script migrates the data from the below Tables :
+# From DC_E_SGSN_SGSN_COUNT to DC_E_SGSN_SGSN_MM_NON_COUNT_%
+# From DC_E_SGSN_SGSN_COUNT to DC_E_SGSN_QOS_SM_NON_COUNT_%
+#
+# From DC_E_SGSN_SGSN_DAY to DC_E_SGSN_SGSN_MM_NON_DAY_%
+# From DC_E_SGSN_SGSN_DAY to DC_E_SGSN_QOS_SM_NON_DAY_%
+#
+# From DC_E_SGSN_SGSN_RAW to DC_E_SGSN_SGSN_MM_NON_RAW_%
+# From DC_E_SGSN_SGSN_RAW to DC_E_SGSN_QOS_SM_NON_RAW_%
+#
+# Once the migration script is executed you would see the below logs in the path /tmp/eniq_migration/
+#
+# DATE : List of dates for which data has been migrated. [ Note : This log will be over-written once the script is re-executed. ]
+# mapping_info : Dates and the corresponding partition number to which the data has been migrated.
+# Note : This log will be over-written once the script is re-executed.
+# 
+# day_MM_NON.log : Logs which will show the number of rows copied from DC_E_SGSN_SGSN_DAY for MM_NON counters. 
+# day_QOS_SM_NON.log : Logs which will show the number of rows copied from DC_E_SGSN_SGSN_DAY for QOS_SM_NON counters.
+# count_MM_NON.log : Logs which will show the number of rows copied from DC_E_SGSN_SGSN_COUNT for MM_NON counters.
+# count_QOS_SM_NON.log : Logs which will show the number of rows copied from DC_E_SGSN_SGSN_COUNT for QOS_SM_NON counters.
+# raw_MM_NON.log : Logs which will show the number of rows copied from DC_E_SGSN_SGSN_RAW for MM_NON counters.
+# raw_QOS_SM_NON.log : Logs which will show the number of rows copied from DC_E_SGSN_SGSN_RAW for QOS_SM_NON counters.
+
+if [ ${LOGNAME} != "dcuser"  ] ; then
+  echo "This script must be executed as dcuser"
+  exit 1
+fi
+
+cd /tmp/
+if [ -d /tmp/eniq_migration_bkp ] ; then
+   rm -rf eniq_migration_bkp
+fi
+if [ -d /tmp/eniq_migration ] ; then
+   mv eniq_migration eniq_migration_bkp
+fi
+mkdir eniq_migration
+chmod 777 eniq_migration
+
+#--------------------------------------------------------------------
+#Global variable
+#--------------------------------------------------------------------
+DC_USER=dc
+DWHREP_USER=dwhrep
+DC_PASSWORD=dc
+DWHREP_PASSWORD=dwhrep
+DWH_NAME_dwhdb=dwhdb
+DWH_NAME_repdb=repdb
+SYBASE_IQ_PATH=/eniq/sybase_iq/OCS-15_0/bin/isql
+log_path=/tmp/eniq_migration/
+#--------------------------------------------------------------------
+
+help_fn()
+{
+        echo "\nERROR: Wrong Usage"
+        echo "Usage : ./migration.sh <LEVEL> "
+        echo "LEVEL : raw or day or count"
+	exit
+}
+
+date_list()
+{
+${SYBASE_IQ_PATH} -U${DC_USER} -P${DC_PASSWORD} -S${DWH_NAME_dwhdb} -b << EOISQL_DATA_ID_MM > /${log_path}/DATE_ID_MM
+select distinct DATE_ID from ${source}
+go
+EOISQL_DATA_ID_MM
+
+cd /${log_path}/
+cat DATE_ID_MM | grep -v "affected" > DATE_ID_MM_tmp
+sed '$d' DATE_ID_MM_tmp > DATE
+rm DATE_ID_MM
+rm DATE_ID_MM_tmp
+}
+
+delete_mapping()
+{
+${SYBASE_IQ_PATH} -U${DWHREP_USER} -P${DWHREP_PASSWORD} -S${DWH_NAME_repdb} -w999999 << LOOP_ISQL -b
+if exists(select 1 from sysobjects where name="mapping")
+drop table mapping
+go
+create table mapping( tablename varchar(60) null,date_id datetime null )
+go
+LOOP_ISQL
+}
+
+insert_mapping()
+{
+while read DATE_ID_mm
+do
+${SYBASE_IQ_PATH} -U${DWHREP_USER} -P${DWHREP_PASSWORD} -S${DWH_NAME_repdb} -w99999 << LOOP_ISQL -b
+insert into mapping select tablename,"$DATE_ID_mm" from dwhpartition where starttime<="$DATE_ID_mm" and endtime>"$DATE_ID_mm" and storageid = "${tab_name}"
+go
+LOOP_ISQL
+done < "DATE"
+
+if [ -f /${log_path}/mapping_info_tmp ] ; then
+        rm /${log_path}/mapping_info_tmp
+fi
+if [ -f /${log_path}/mapping_info ] ; then
+        rm /${log_path}/mapping_info
+fi
+if [ -f /${log_path}/mapping_info_tmp1 ] ; then
+        rm /${log_path}/mapping_info_tmp1
+fi
+
+${SYBASE_IQ_PATH} -U${DWHREP_USER} -P${DWHREP_PASSWORD} -S${DWH_NAME_repdb} -w99999<< LOOP_ISQL -b > /${log_path}/mapping_info_tmp
+select tablename,",",date_id from mapping
+go
+LOOP_ISQL
+
+cd /${log_path}/
+cat mapping_info_tmp | grep -v "affected" > mapping_info_tmp1
+sed '$d' mapping_info_tmp1 > mapping_info
+rm mapping_info_tmp*
+}
+
+#---------------------------------------------------------------------------------------
+
+day_MM_NON() {
+
+if [ -f /${log_path}/day_MM_NON.log ] ; then
+        mv /${log_path}/day_MM_NON.log /${log_path}/day_MM_NON_bkp.log
+        touch /${log_path}/day_MM_NON.log
+fi
+
+echo "To migrate the data for DC_E_SGSN_SGSN_MM_NON_DAY from DC_E_SGSN_SGSN_DAY"
+while IFS=, read tabname dateid
+do
+${SYBASE_IQ_PATH} -U${DC_USER} -P${DC_PASSWORD} -S${DWH_NAME_dwhdb} -w999999 << LOOP_ISQL1 -b >> /${log_path}/day_MM_NON.log
+if exists (select 1 from sysobjects where name="day_view1" and type="V")
+drop view day_view1
+go
+create view day_view1 as select OSS_ID, SN, NEUN, NEDN, NESW, SGSN, Identifier, PERIOD_DURATION2, DATE_ID, YEAR_ID, MONTH_ID, DAY_ID, WEEK_ID, DATACOVERAGE, AGG_COUNT, TIMELEVEL, SESSION_ID, BATCH_ID, PERIOD_DURATION, ROWSTATUS, DC_RELEASE, DC_SOURCE, DC_TIMEZONE, DC_SUSPECTFLAG,attAuthInSgsn,attCombiAttach,attCombiDetachMs, attGprsAttach,attGprsAttachUmts,attGprsAttachVisitor,attGprsDetachMs,attGprsDetachMsUmts,attGprsDetachSgsn,attGprsDetachSgsnUmts,attImsiAttach,attImsiDetachMs,attInterSgsnRaUpdate, attInterSgsnRaUpdateUmts,attInterSgsnRaUpdateVisitor,attIntraSgsnRaUpdate,attIntraSgsnRaUpdateUmts,attPacketSwitchingPaging,attPacketSwitchingPagingUmts,discardedAttachMsError,discardedCombiAttach, discardedCombiRaUpdate,discardedDetach,discardedGprsAttach,discardedPayloadPacket,discardedRaUpdate, gprsMmSgsnPagingProcedures,gprsMmSgsnRejectedByAdmissionControl,gprsMmSgsnSuccessfulPagingProcedures, gprsMmSgsnUnsuccessfulAttachRequests,gprsMmSgsnUnsuccessfulPagingProcedures,ISYSC_AttIntraSgsnGsmUmtsRau, ISYSC_AttIntraSgsnUmtsGsmRau,ISYSC_SuccIntraSgsnGsmUmtsRau,ISYSC_SuccIntraSgsnUmtsGsmRau,ISYSC_UnsuccIntraSgsnGsmUmtsRauCSPSCoord, MM_AttachedLost_G,MM_AttachedLost_U,MM_AttAttachAcceptNon3GPPCompliant_G,MM_AttAttachAcceptNon3GPPCompliant_U, MM_AttAuthCiphReqNon3GPPCompliant_G,MM_AttAuthCiphReqNon3GPPCompliant_U,MM_AttChangeOfLocalTime_G, MM_AttChangeOfLocalTime_U,MM_AttDetachInactiveSub_G,MM_AttDetachInactiveSub_U,MM_AttRauAcceptNon3GPPCompliant_G,MM_AttRauAcceptNon3GPPCompliant_U,MM_AttServiceReqData_U, MM_AttServiceRequest_U,MM_NbrActAttachedSub_G,MM_NbrActAttachedSub_U,MM_NbrCamelSub_G,MM_NbrCamelSub_U,MM_nbrDetachedInactiveSub_G,MM_nbrDetachedInactiveSub_U, MM_NbrHomeSub_G,MM_NbrHomeSub_U,MM_NbrSubPmmConnected,MM_NbrVisitingForeign_G,MM_NbrVisitingForeign_U,MM_NbrVisitingNatSub_G,MM_NbrVisitingNatSub_U, MM_UnsuccAttachCC11_G,MM_UnsuccAttachCC11_U,MM_UnsuccAttachCC13_G,MM_UnsuccAttachCC13_U, MM_UnsuccAttachCC14_G,MM_UnsuccAttachCC14_U,MM_UnsuccAttachCC15_G,MM_UnsuccAttachCC15_U, MM_UnsuccAttachCC17_G,MM_UnsuccAttachCC17_U,MM_UnsuccAttachCC22_G,MM_UnsuccAttachCC22_U,MM_UnsuccAttachCC7_G,MM_UnsuccAttachCC7_U,MM_UnsuccAttachCC8_G, MM_UnsuccAttachCC8_U,MM_UnsuccAttachCSPSCoord_U,MM_UnsuccAttachLicenseExceeded,MM_UnsuccInterSgsnRau_G, MM_UnsuccInterSgsnRau_U,MM_UnsuccInterSgsnRauCC10_G,MM_UnsuccInterSgsnRauCC10_U,MM_UnsuccInterSgsnRauCC14_G, MM_UnsuccInterSgsnRauCC14_U,MM_UnsuccInterSgsnRauCC15_G,MM_UnsuccInterSgsnRauCC15_U, MM_UnsuccInterSgsnRauCC17_G,MM_UnsuccInterSgsnRauCC17_U,MM_UnsuccInterSgsnRauCC9_G,MM_UnsuccInterSgsnRauCC9_U, MM_UnsuccIntraSgsnRau_G,MM_UnsuccIntraSgsnRau_U,MM_UnsuccIntraSgsnRauCC14_G,MM_UnsuccIntraSgsnRauCC14_U,MM_UnsuccIntraSgsnRauCC15_G,MM_UnsuccIntraSgsnRauCC15_U, MM_UnsuccIntraSgsnRauCC17_G,MM_UnsuccIntraSgsnRauCC17_U,MM_UnsuccIntraSgsnRAUCSPSCoord_U,MM_UnsuccISRAUCSPSCoord_U, MM_UnsuccServiceReq_U,nbrOfSubReady,nbrOfSubStandby,subscribersInTransitionalState,succAuthInSgsn,succCombiAttach, succGprsAttach,succGprsAttachUmts,succGprsAttachVisitor,succGprsDetachSgsn,succGprsDetachSgsnUmts,succImsiAttach, succInterSgsnRaUpdate,succInterSgsnRaUpdateUmts,succInterSgsnRaUpdateVisitor, succIntraSgsnRaUpdate,succIntraSgsnRaUpdateUmts,succPacketSwitchingPagingUmts,unsuccGprsAttachUmts,unsuccPacketSwitchingPaging,unsuccPacketSwitchingPagingUmts from DC_E_SGSN_SGSN_DAY where date_id="$dateid"
+go
+insert into $tabname select OSS_ID, SN, NEUN, NEDN, NESW, SGSN, Identifier, PERIOD_DURATION2, DATE_ID, YEAR_ID, MONTH_ID, DAY_ID, WEEK_ID, DATACOVERAGE, AGG_COUNT, TIMELEVEL, SESSION_ID, BATCH_ID, PERIOD_DURATION, ROWSTATUS, DC_RELEASE, DC_SOURCE, DC_TIMEZONE, DC_SUSPECTFLAG,attAuthInSgsn,attCombiAttach,attCombiDetachMs, attGprsAttach,attGprsAttachUmts,attGprsAttachVisitor,attGprsDetachMs,attGprsDetachMsUmts,attGprsDetachSgsn,attGprsDetachSgsnUmts,attImsiAttach,attImsiDetachMs,attInterSgsnRaUpdate, attInterSgsnRaUpdateUmts,attInterSgsnRaUpdateVisitor,attIntraSgsnRaUpdate,attIntraSgsnRaUpdateUmts,attPacketSwitchingPaging,attPacketSwitchingPagingUmts,discardedAttachMsError,discardedCombiAttach, discardedCombiRaUpdate,discardedDetach,discardedGprsAttach,discardedPayloadPacket,discardedRaUpdate, gprsMmSgsnPagingProcedures,gprsMmSgsnRejectedByAdmissionControl,gprsMmSgsnSuccessfulPagingProcedures, gprsMmSgsnUnsuccessfulAttachRequests,gprsMmSgsnUnsuccessfulPagingProcedures,ISYSC_AttIntraSgsnGsmUmtsRau, ISYSC_AttIntraSgsnUmtsGsmRau,ISYSC_SuccIntraSgsnGsmUmtsRau,ISYSC_SuccIntraSgsnUmtsGsmRau,ISYSC_UnsuccIntraSgsnGsmUmtsRauCSPSCoord, MM_AttachedLost_G,MM_AttachedLost_U,MM_AttAttachAcceptNon3GPPCompliant_G,MM_AttAttachAcceptNon3GPPCompliant_U, MM_AttAuthCiphReqNon3GPPCompliant_G,MM_AttAuthCiphReqNon3GPPCompliant_U,MM_AttChangeOfLocalTime_G, MM_AttChangeOfLocalTime_U,MM_AttDetachInactiveSub_G,MM_AttDetachInactiveSub_U,MM_AttRauAcceptNon3GPPCompliant_G,MM_AttRauAcceptNon3GPPCompliant_U,MM_AttServiceReqData_U, MM_AttServiceRequest_U,MM_NbrActAttachedSub_G,MM_NbrActAttachedSub_U,MM_NbrCamelSub_G,MM_NbrCamelSub_U,MM_nbrDetachedInactiveSub_G,MM_nbrDetachedInactiveSub_U, MM_NbrHomeSub_G,MM_NbrHomeSub_U,MM_NbrSubPmmConnected,MM_NbrVisitingForeign_G,MM_NbrVisitingForeign_U,MM_NbrVisitingNatSub_G,MM_NbrVisitingNatSub_U, MM_UnsuccAttachCC11_G,MM_UnsuccAttachCC11_U,MM_UnsuccAttachCC13_G,MM_UnsuccAttachCC13_U, MM_UnsuccAttachCC14_G,MM_UnsuccAttachCC14_U,MM_UnsuccAttachCC15_G,MM_UnsuccAttachCC15_U, MM_UnsuccAttachCC17_G,MM_UnsuccAttachCC17_U,MM_UnsuccAttachCC22_G,MM_UnsuccAttachCC22_U,MM_UnsuccAttachCC7_G,MM_UnsuccAttachCC7_U,MM_UnsuccAttachCC8_G, MM_UnsuccAttachCC8_U,MM_UnsuccAttachCSPSCoord_U,MM_UnsuccAttachLicenseExceeded,MM_UnsuccInterSgsnRau_G, MM_UnsuccInterSgsnRau_U,MM_UnsuccInterSgsnRauCC10_G,MM_UnsuccInterSgsnRauCC10_U,MM_UnsuccInterSgsnRauCC14_G, MM_UnsuccInterSgsnRauCC14_U,MM_UnsuccInterSgsnRauCC15_G,MM_UnsuccInterSgsnRauCC15_U, MM_UnsuccInterSgsnRauCC17_G,MM_UnsuccInterSgsnRauCC17_U,MM_UnsuccInterSgsnRauCC9_G,MM_UnsuccInterSgsnRauCC9_U, MM_UnsuccIntraSgsnRau_G,MM_UnsuccIntraSgsnRau_U,MM_UnsuccIntraSgsnRauCC14_G,MM_UnsuccIntraSgsnRauCC14_U,MM_UnsuccIntraSgsnRauCC15_G,MM_UnsuccIntraSgsnRauCC15_U, MM_UnsuccIntraSgsnRauCC17_G,MM_UnsuccIntraSgsnRauCC17_U,MM_UnsuccIntraSgsnRAUCSPSCoord_U,MM_UnsuccISRAUCSPSCoord_U, MM_UnsuccServiceReq_U,nbrOfSubReady,nbrOfSubStandby,subscribersInTransitionalState,succAuthInSgsn,succCombiAttach, succGprsAttach,succGprsAttachUmts,succGprsAttachVisitor,succGprsDetachSgsn,succGprsDetachSgsnUmts,succImsiAttach, succInterSgsnRaUpdate,succInterSgsnRaUpdateUmts,succInterSgsnRaUpdateVisitor, succIntraSgsnRaUpdate,succIntraSgsnRaUpdateUmts,succPacketSwitchingPagingUmts,unsuccGprsAttachUmts,unsuccPacketSwitchingPaging,unsuccPacketSwitchingPagingUmts,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null from day_view1
+go
+if exists (select 1 from sysobjects where name="day_view1" and type="V")
+drop view day_view1
+go
+LOOP_ISQL1
+
+done < mapping_info
+}
+
+day_QOS_SM_NON() {
+
+if [ -f /${log_path}/day_QOS_SM_NON.log ] ; then
+        mv /${log_path}/day_QOS_SM_NON.log /${log_path}/day_QOS_SM_NON_bkp.log
+        touch /${log_path}/day_QOS_SM_NON.log
+fi
+
+echo "To migrate the data for DC_E_SGSN_QOS_SM_NON_DAY from DC_E_SGSN_SGSN_DAY"
+while IFS=, read tabname dateid
+do
+${SYBASE_IQ_PATH} -U${DC_USER} -P${DC_PASSWORD} -S${DWH_NAME_dwhdb} -w999999 << LOOP_ISQL1 -b >> /${log_path}/day_QOS_SM_NON.log 
+if exists (select 1 from sysobjects where name="day_view2" and type="V")
+drop view day_view2
+go
+create view day_view2 as select OSS_ID,SN,NEUN,NEDN,NESW,SGSN,Identifier,PERIOD_DURATION2,DATE_ID,YEAR_ID,MONTH_ID,DAY_ID,WEEK_ID,DATACOVERAGE,AGG_COUNT,TIMELEVEL,SESSION_ID,BATCH_ID,PERIOD_DURATION,ROWSTATUS,DC_RELEASE,DC_SOURCE,DC_TIMEZONE,DC_SUSPECTFLAG,discardedSessionMgmnt,gprsSmSgsnDeactivations,gprsSmSgsnUnsuccessfulActivations,gprsSmSgsnUnsuccessfulModifications,QoS_AttActConversationalPdpContext_G, QoS_AttActConversationalPdpContext_U,QoS_AttActInteractivePdpContext_G,QoS_AttActInteractivePdpContext_U,QoS_AttActStreamingPdpContext_G,QoS_AttActStreamingPdpContext_U,QoS_BackgroundAttRabAss_U, QoS_BackgroundReSentRabAss_U,QoS_BackgroundSuccRabAss_U,QoS_ConversationalAttRabAss_U,QoS_ConversationalReSentRabAss_U,QoS_ConversationalSuccRabAss_U,QoS_CurrentGuaranteedBitRate_G, QoS_CurrentGuaranteedBitRate_U,QoS_DLBackgroundPktDiscarded_G,QoS_DLBackgroundPktDiscarded_U,QoS_DLBackgroundPktForwarded_G,QoS_DLBackgroundPktForwarded_U,QoS_DLConversationalPktDiscarded_G, QoS_DLConversationalPktDiscarded_U,QoS_DLConversationalPktForwarded_G,QoS_DLConversationalPktForwarded_U,QoS_DLInteractivePktDiscarded_G,QoS_DLInteractivePktDiscarded_U, QoS_DLInteractivePktForwarded_G,QoS_DLInteractivePktForwarded_U,QoS_DLStreamingPktDiscarded_G,QoS_DLStreamingPktDiscarded_U,QoS_DLStreamingPktForwarded_G,QoS_DLStreamingPktForwarded_U, QoS_GuaranteedBitRateAttempts_G,QoS_GuaranteedBitRateAttempts_U,QoS_GuaranteedBitRateDowngrades_G,QoS_GuaranteedBitRateDowngrades_U,QoS_InteractiveAttRabAss_U,QoS_InteractiveReSentRabAss_U, QoS_InteractiveSuccRabAss_U,QoS_NbrActConversationalPdpContext_G,QoS_NbrActConversationalPdpContext_U,QoS_NbrActInteractivePdpContext_G,QoS_NbrActInteractivePdpContext_U, QoS_NbrActStreamingPdpContext_G,QoS_NbrActStreamingPdpContext_U,QoS_StreamingAttRabAss_U,QoS_StreamingReSentRabAss_U,QoS_StreamingSuccRabAss_U,QoS_ULBackgroundPktForwarded, QoS_ULConversationalPktForwarded,QoS_ULInteractivePktForwarded,QoS_ULStreamingPktForwarded,SM_AttActPdpContext_G,SM_AttActPdpContext_U,SM_AttActPdpContextDyn_G,SM_AttActPdpContextDyn_U, SM_AttActPdpContextSgsnHome_G,SM_AttActPdpContextSgsnHome_U,SM_AttActSecondPdpContext_G,SM_AttActSecondPdpContext_U,SM_AttDeactPdpContextGgsn_G,SM_AttDeactPdpContextGgsn_U, SM_AttDeactPdpContextMs_G,SM_AttDeactPdpContextMs_U,SM_AttDeactPdpContextSgsn_G,SM_AttDeactPdpContextSgsn_U,SM_AttDeactPdpContextSgsnCC38_G,SM_AttDeactPdpContextSgsnCC38_U, SM_AttDeactPdpContextSgsnCC39_G,SM_AttDeactPdpContextSgsnCC39_U,SM_AttModPdpContextMs_G,SM_AttModPdpContextMs_U,SM_AttModPdpContextSgsn_G,SM_AttModPdpContextSgsn_U, SM_AttRabAssignment,SM_AttRabModPS,SM_AttUpdPdpContextGgsn_G,SM_AttUpdPdpContextGgsn_U,SM_AttUpdPdpContextSgsn_G,SM_AttUpdPdpContextSgsn_U,SM_DeactivatedPDPContextOldSgsn_G, SM_DeactivatedPDPContextOldSgsn_U,SM_NbrActivePDPsApprFor3GDT_U,SM_NbrActivePdpPerSgsn_G,SM_NbrActivePdpPerSgsn_U,SM_NbrActPdpContext_G,SM_NbrActPdpContext_U,SM_NbrActSessions, SM_NotDeactivatedPDPContextOldSgsn_G,SM_NotDeactivatedPDPContextOldSgsn_U,SM_PdpContextsLost_G,SM_PdpContextsLost_U,SM_SuccActPdpContext_G,SM_SuccActPdpContext_U, SM_SuccActPdpContextDyn_G,SM_SuccActPdpContextDyn_U,SM_SuccActPdpContextSgsnHome_G,SM_SuccActPdpContextSgsnHome_U,SM_SuccActSecondPdpContext_G,SM_SuccActSecondPdpContext_U, SM_SuccDeactPdpContextGgsn_G,SM_SuccDeactPdpContextGgsn_U,SM_SuccDeactPdpContextMs_G,SM_SuccDeactPdpContextMs_U,SM_SuccDeactPdpContextSgsn_G,SM_SuccDeactPdpContextSgsn_U, SM_SuccModPdpContextMs_G,SM_SuccModPdpContextMs_U,SM_SuccModPdpContextSgsn_G,SM_SuccModPdpContextSgsn_U,SM_SuccRabAssignment,SM_SuccUpdPdpContextGgsn_G, SM_SuccUpdPdpContextGgsn_U,SM_SuccUpdPdpContextSgsn_G,SM_SuccUpdPdpContextSgsn_U,SM_UnsuccActPdpContext_U,SM_UnsuccActPdpContextCamel_G,SM_UnsuccActPdpContextCamel_U, SM_UnsuccActPdpContextCC26_G,SM_UnsuccActPdpContextCC26_U,SM_UnsuccActPdpContextCC27_28_G,SM_UnsuccActPdpContextCC27_28_U,SM_UnsuccActPdpContextCC29_G, SM_UnsuccActPdpContextCC29_U,SM_UnsuccActPdpContextCC32_33_G,SM_UnsuccActPdpContextCC32_33_U,SM_UnsuccActPdpContextCC38_G,SM_UnsuccActPdpContextCC38_U, SM_UnsuccActPdpContextLicenseExceeded from DC_E_SGSN_SGSN_DAY where date_id="$dateid"
+go
+insert into $tabname select OSS_ID,SN,NEUN,NEDN,NESW,SGSN,Identifier,PERIOD_DURATION2,DATE_ID,YEAR_ID,MONTH_ID,DAY_ID,WEEK_ID,DATACOVERAGE,AGG_COUNT,TIMELEVEL,SESSION_ID,BATCH_ID,PERIOD_DURATION,ROWSTATUS,DC_RELEASE,DC_SOURCE,DC_TIMEZONE,DC_SUSPECTFLAG,discardedSessionMgmnt,gprsSmSgsnDeactivations,gprsSmSgsnUnsuccessfulActivations,gprsSmSgsnUnsuccessfulModifications,QoS_AttActConversationalPdpContext_G, QoS_AttActConversationalPdpContext_U,QoS_AttActInteractivePdpContext_G,QoS_AttActInteractivePdpContext_U,QoS_AttActStreamingPdpContext_G,QoS_AttActStreamingPdpContext_U,QoS_BackgroundAttRabAss_U, QoS_BackgroundReSentRabAss_U,QoS_BackgroundSuccRabAss_U,QoS_ConversationalAttRabAss_U,QoS_ConversationalReSentRabAss_U,QoS_ConversationalSuccRabAss_U,QoS_CurrentGuaranteedBitRate_G, QoS_CurrentGuaranteedBitRate_U,QoS_DLBackgroundPktDiscarded_G,QoS_DLBackgroundPktDiscarded_U,QoS_DLBackgroundPktForwarded_G,QoS_DLBackgroundPktForwarded_U,QoS_DLConversationalPktDiscarded_G, QoS_DLConversationalPktDiscarded_U,QoS_DLConversationalPktForwarded_G,QoS_DLConversationalPktForwarded_U,QoS_DLInteractivePktDiscarded_G,QoS_DLInteractivePktDiscarded_U, QoS_DLInteractivePktForwarded_G,QoS_DLInteractivePktForwarded_U,QoS_DLStreamingPktDiscarded_G,QoS_DLStreamingPktDiscarded_U,QoS_DLStreamingPktForwarded_G,QoS_DLStreamingPktForwarded_U, QoS_GuaranteedBitRateAttempts_G,QoS_GuaranteedBitRateAttempts_U,QoS_GuaranteedBitRateDowngrades_G,QoS_GuaranteedBitRateDowngrades_U,QoS_InteractiveAttRabAss_U,QoS_InteractiveReSentRabAss_U, QoS_InteractiveSuccRabAss_U,QoS_NbrActConversationalPdpContext_G,QoS_NbrActConversationalPdpContext_U,QoS_NbrActInteractivePdpContext_G,QoS_NbrActInteractivePdpContext_U, QoS_NbrActStreamingPdpContext_G,QoS_NbrActStreamingPdpContext_U,QoS_StreamingAttRabAss_U,QoS_StreamingReSentRabAss_U,QoS_StreamingSuccRabAss_U,QoS_ULBackgroundPktForwarded, QoS_ULConversationalPktForwarded,QoS_ULInteractivePktForwarded,QoS_ULStreamingPktForwarded,SM_AttActPdpContext_G,SM_AttActPdpContext_U,SM_AttActPdpContextDyn_G,SM_AttActPdpContextDyn_U, SM_AttActPdpContextSgsnHome_G,SM_AttActPdpContextSgsnHome_U,SM_AttActSecondPdpContext_G,SM_AttActSecondPdpContext_U,SM_AttDeactPdpContextGgsn_G,SM_AttDeactPdpContextGgsn_U, SM_AttDeactPdpContextMs_G,SM_AttDeactPdpContextMs_U,SM_AttDeactPdpContextSgsn_G,SM_AttDeactPdpContextSgsn_U,SM_AttDeactPdpContextSgsnCC38_G,SM_AttDeactPdpContextSgsnCC38_U, SM_AttDeactPdpContextSgsnCC39_G,SM_AttDeactPdpContextSgsnCC39_U,SM_AttModPdpContextMs_G,SM_AttModPdpContextMs_U,SM_AttModPdpContextSgsn_G,SM_AttModPdpContextSgsn_U, SM_AttRabAssignment,SM_AttRabModPS,SM_AttUpdPdpContextGgsn_G,SM_AttUpdPdpContextGgsn_U,SM_AttUpdPdpContextSgsn_G,SM_AttUpdPdpContextSgsn_U,SM_DeactivatedPDPContextOldSgsn_G, SM_DeactivatedPDPContextOldSgsn_U,SM_NbrActivePDPsApprFor3GDT_U,SM_NbrActivePdpPerSgsn_G,SM_NbrActivePdpPerSgsn_U,SM_NbrActPdpContext_G,SM_NbrActPdpContext_U,SM_NbrActSessions, SM_NotDeactivatedPDPContextOldSgsn_G,SM_NotDeactivatedPDPContextOldSgsn_U,SM_PdpContextsLost_G,SM_PdpContextsLost_U,SM_SuccActPdpContext_G,SM_SuccActPdpContext_U, SM_SuccActPdpContextDyn_G,SM_SuccActPdpContextDyn_U,SM_SuccActPdpContextSgsnHome_G,SM_SuccActPdpContextSgsnHome_U,SM_SuccActSecondPdpContext_G,SM_SuccActSecondPdpContext_U, SM_SuccDeactPdpContextGgsn_G,SM_SuccDeactPdpContextGgsn_U,SM_SuccDeactPdpContextMs_G,SM_SuccDeactPdpContextMs_U,SM_SuccDeactPdpContextSgsn_G,SM_SuccDeactPdpContextSgsn_U, SM_SuccModPdpContextMs_G,SM_SuccModPdpContextMs_U,SM_SuccModPdpContextSgsn_G,SM_SuccModPdpContextSgsn_U,SM_SuccRabAssignment,SM_SuccUpdPdpContextGgsn_G, SM_SuccUpdPdpContextGgsn_U,SM_SuccUpdPdpContextSgsn_G,SM_SuccUpdPdpContextSgsn_U,SM_UnsuccActPdpContext_U,SM_UnsuccActPdpContextCamel_G,SM_UnsuccActPdpContextCamel_U, SM_UnsuccActPdpContextCC26_G,SM_UnsuccActPdpContextCC26_U,SM_UnsuccActPdpContextCC27_28_G,SM_UnsuccActPdpContextCC27_28_U,SM_UnsuccActPdpContextCC29_G, SM_UnsuccActPdpContextCC29_U,SM_UnsuccActPdpContextCC32_33_G,SM_UnsuccActPdpContextCC32_33_U,SM_UnsuccActPdpContextCC38_G,SM_UnsuccActPdpContextCC38_U, SM_UnsuccActPdpContextLicenseExceeded,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null from day_view2
+go
+if exists (select 1 from sysobjects where name="day_view2" and type="V")
+drop view day_view2
+go
+LOOP_ISQL1
+
+done < mapping_info
+}
+
+#---------------------------------------------------------------------------------------
+
+raw_MM_NON() {
+
+if [ -f /${log_path}/raw_MM_NON.log ] ; then
+        mv /${log_path}/raw_MM_NON.log /${log_path}/raw_MM_NON_bkp.log
+        touch /${log_path}/raw_MM_NON.log
+fi
+
+echo "To migrate the data for DC_E_SGSN_SGSN_MM_NON_RAW from DC_E_SGSN_SGSN_RAW"
+while IFS=, read tabname dateid
+do
+${SYBASE_IQ_PATH} -U${DC_USER} -P${DC_PASSWORD} -S${DWH_NAME_dwhdb} -w999999 << LOOP_ISQL1 -b >> /${log_path}/raw_MM_NON.log
+if exists (select 1 from sysobjects where name="raw_view1" and type="V")
+drop view raw_view1
+go
+create view raw_view1 as select OSS_ID,SN,NEUN,NEDN,NESW,SGSN,Identifier,PERIOD_DURATION2,DATE_ID,YEAR_ID,MONTH_ID,DAY_ID,HOUR_ID,DATETIME_ID,MIN_ID,TIMELEVEL,SESSION_ID,BATCH_ID,PERIOD_DURATION,ROWSTATUS,DC_RELEASE,DC_SOURCE,DC_TIMEZONE,DC_SUSPECTFLAG,UTC_DATETIME_ID,attAuthInSgsn,attCombiAttach,attCombiDetachMs, attGprsAttach,attGprsAttachUmts,attGprsAttachVisitor,attGprsDetachMs,attGprsDetachMsUmts,attGprsDetachSgsn,attGprsDetachSgsnUmts,attImsiAttach,attImsiDetachMs,attInterSgsnRaUpdate, attInterSgsnRaUpdateUmts,attInterSgsnRaUpdateVisitor,attIntraSgsnRaUpdate,attIntraSgsnRaUpdateUmts,attPacketSwitchingPaging,attPacketSwitchingPagingUmts,discardedAttachMsError,discardedCombiAttach, discardedCombiRaUpdate,discardedDetach,discardedGprsAttach,discardedPayloadPacket,discardedRaUpdate, gprsMmSgsnPagingProcedures,gprsMmSgsnRejectedByAdmissionControl,gprsMmSgsnSuccessfulPagingProcedures, gprsMmSgsnUnsuccessfulAttachRequests,gprsMmSgsnUnsuccessfulPagingProcedures,ISYSC_AttIntraSgsnGsmUmtsRau, ISYSC_AttIntraSgsnUmtsGsmRau,ISYSC_SuccIntraSgsnGsmUmtsRau,ISYSC_SuccIntraSgsnUmtsGsmRau,ISYSC_UnsuccIntraSgsnGsmUmtsRauCSPSCoord, MM_AttachedLost_G,MM_AttachedLost_U,MM_AttAttachAcceptNon3GPPCompliant_G,MM_AttAttachAcceptNon3GPPCompliant_U, MM_AttAuthCiphReqNon3GPPCompliant_G,MM_AttAuthCiphReqNon3GPPCompliant_U,MM_AttChangeOfLocalTime_G, MM_AttChangeOfLocalTime_U,MM_AttDetachInactiveSub_G,MM_AttDetachInactiveSub_U,MM_AttRauAcceptNon3GPPCompliant_G,MM_AttRauAcceptNon3GPPCompliant_U,MM_AttServiceReqData_U, MM_AttServiceRequest_U,MM_NbrActAttachedSub_G,MM_NbrActAttachedSub_U,MM_NbrCamelSub_G,MM_NbrCamelSub_U,MM_nbrDetachedInactiveSub_G,MM_nbrDetachedInactiveSub_U, MM_NbrHomeSub_G,MM_NbrHomeSub_U,MM_NbrSubPmmConnected,MM_NbrVisitingForeign_G,MM_NbrVisitingForeign_U,MM_NbrVisitingNatSub_G,MM_NbrVisitingNatSub_U, MM_UnsuccAttachCC11_G,MM_UnsuccAttachCC11_U,MM_UnsuccAttachCC13_G,MM_UnsuccAttachCC13_U, MM_UnsuccAttachCC14_G,MM_UnsuccAttachCC14_U,MM_UnsuccAttachCC15_G,MM_UnsuccAttachCC15_U, MM_UnsuccAttachCC17_G,MM_UnsuccAttachCC17_U,MM_UnsuccAttachCC22_G,MM_UnsuccAttachCC22_U,MM_UnsuccAttachCC7_G,MM_UnsuccAttachCC7_U,MM_UnsuccAttachCC8_G, MM_UnsuccAttachCC8_U,MM_UnsuccAttachCSPSCoord_U,MM_UnsuccAttachLicenseExceeded,MM_UnsuccInterSgsnRau_G, MM_UnsuccInterSgsnRau_U,MM_UnsuccInterSgsnRauCC10_G,MM_UnsuccInterSgsnRauCC10_U,MM_UnsuccInterSgsnRauCC14_G, MM_UnsuccInterSgsnRauCC14_U,MM_UnsuccInterSgsnRauCC15_G,MM_UnsuccInterSgsnRauCC15_U, MM_UnsuccInterSgsnRauCC17_G,MM_UnsuccInterSgsnRauCC17_U,MM_UnsuccInterSgsnRauCC9_G,MM_UnsuccInterSgsnRauCC9_U, MM_UnsuccIntraSgsnRau_G,MM_UnsuccIntraSgsnRau_U,MM_UnsuccIntraSgsnRauCC14_G,MM_UnsuccIntraSgsnRauCC14_U,MM_UnsuccIntraSgsnRauCC15_G,MM_UnsuccIntraSgsnRauCC15_U, MM_UnsuccIntraSgsnRauCC17_G,MM_UnsuccIntraSgsnRauCC17_U,MM_UnsuccIntraSgsnRAUCSPSCoord_U,MM_UnsuccISRAUCSPSCoord_U, MM_UnsuccServiceReq_U,nbrOfSubReady,nbrOfSubStandby,subscribersInTransitionalState,succAuthInSgsn,succCombiAttach, succGprsAttach,succGprsAttachUmts,succGprsAttachVisitor,succGprsDetachSgsn,succGprsDetachSgsnUmts,succImsiAttach, succInterSgsnRaUpdate,succInterSgsnRaUpdateUmts,succInterSgsnRaUpdateVisitor, succIntraSgsnRaUpdate,succIntraSgsnRaUpdateUmts,succPacketSwitchingPagingUmts,unsuccGprsAttachUmts,unsuccPacketSwitchingPaging,unsuccPacketSwitchingPagingUmts from DC_E_SGSN_SGSN_RAW where date_id="$dateid"
+go
+insert into $tabname select OSS_ID,SN,NEUN,NEDN,NESW,SGSN,Identifier,PERIOD_DURATION2,DATE_ID,YEAR_ID,MONTH_ID,DAY_ID,HOUR_ID,DATETIME_ID,MIN_ID,TIMELEVEL,SESSION_ID,BATCH_ID,PERIOD_DURATION,ROWSTATUS,DC_RELEASE,DC_SOURCE,DC_TIMEZONE,DC_SUSPECTFLAG,UTC_DATETIME_ID,attAuthInSgsn,attCombiAttach,attCombiDetachMs, attGprsAttach,attGprsAttachUmts,attGprsAttachVisitor,attGprsDetachMs,attGprsDetachMsUmts,attGprsDetachSgsn,attGprsDetachSgsnUmts,attImsiAttach,attImsiDetachMs,attInterSgsnRaUpdate, attInterSgsnRaUpdateUmts,attInterSgsnRaUpdateVisitor,attIntraSgsnRaUpdate,attIntraSgsnRaUpdateUmts,attPacketSwitchingPaging,attPacketSwitchingPagingUmts,discardedAttachMsError,discardedCombiAttach, discardedCombiRaUpdate,discardedDetach,discardedGprsAttach,discardedPayloadPacket,discardedRaUpdate, gprsMmSgsnPagingProcedures,gprsMmSgsnRejectedByAdmissionControl,gprsMmSgsnSuccessfulPagingProcedures, gprsMmSgsnUnsuccessfulAttachRequests,gprsMmSgsnUnsuccessfulPagingProcedures,ISYSC_AttIntraSgsnGsmUmtsRau, ISYSC_AttIntraSgsnUmtsGsmRau,ISYSC_SuccIntraSgsnGsmUmtsRau,ISYSC_SuccIntraSgsnUmtsGsmRau,ISYSC_UnsuccIntraSgsnGsmUmtsRauCSPSCoord, MM_AttachedLost_G,MM_AttachedLost_U,MM_AttAttachAcceptNon3GPPCompliant_G,MM_AttAttachAcceptNon3GPPCompliant_U, MM_AttAuthCiphReqNon3GPPCompliant_G,MM_AttAuthCiphReqNon3GPPCompliant_U,MM_AttChangeOfLocalTime_G, MM_AttChangeOfLocalTime_U,MM_AttDetachInactiveSub_G,MM_AttDetachInactiveSub_U,MM_AttRauAcceptNon3GPPCompliant_G,MM_AttRauAcceptNon3GPPCompliant_U,MM_AttServiceReqData_U, MM_AttServiceRequest_U,MM_NbrActAttachedSub_G,MM_NbrActAttachedSub_U,MM_NbrCamelSub_G,MM_NbrCamelSub_U,MM_nbrDetachedInactiveSub_G,MM_nbrDetachedInactiveSub_U, MM_NbrHomeSub_G,MM_NbrHomeSub_U,MM_NbrSubPmmConnected,MM_NbrVisitingForeign_G,MM_NbrVisitingForeign_U,MM_NbrVisitingNatSub_G,MM_NbrVisitingNatSub_U, MM_UnsuccAttachCC11_G,MM_UnsuccAttachCC11_U,MM_UnsuccAttachCC13_G,MM_UnsuccAttachCC13_U, MM_UnsuccAttachCC14_G,MM_UnsuccAttachCC14_U,MM_UnsuccAttachCC15_G,MM_UnsuccAttachCC15_U, MM_UnsuccAttachCC17_G,MM_UnsuccAttachCC17_U,MM_UnsuccAttachCC22_G,MM_UnsuccAttachCC22_U,MM_UnsuccAttachCC7_G,MM_UnsuccAttachCC7_U,MM_UnsuccAttachCC8_G, MM_UnsuccAttachCC8_U,MM_UnsuccAttachCSPSCoord_U,MM_UnsuccAttachLicenseExceeded,MM_UnsuccInterSgsnRau_G, MM_UnsuccInterSgsnRau_U,MM_UnsuccInterSgsnRauCC10_G,MM_UnsuccInterSgsnRauCC10_U,MM_UnsuccInterSgsnRauCC14_G, MM_UnsuccInterSgsnRauCC14_U,MM_UnsuccInterSgsnRauCC15_G,MM_UnsuccInterSgsnRauCC15_U, MM_UnsuccInterSgsnRauCC17_G,MM_UnsuccInterSgsnRauCC17_U,MM_UnsuccInterSgsnRauCC9_G,MM_UnsuccInterSgsnRauCC9_U, MM_UnsuccIntraSgsnRau_G,MM_UnsuccIntraSgsnRau_U,MM_UnsuccIntraSgsnRauCC14_G,MM_UnsuccIntraSgsnRauCC14_U,MM_UnsuccIntraSgsnRauCC15_G,MM_UnsuccIntraSgsnRauCC15_U, MM_UnsuccIntraSgsnRauCC17_G,MM_UnsuccIntraSgsnRauCC17_U,MM_UnsuccIntraSgsnRAUCSPSCoord_U,MM_UnsuccISRAUCSPSCoord_U, MM_UnsuccServiceReq_U,nbrOfSubReady,nbrOfSubStandby,subscribersInTransitionalState,succAuthInSgsn,succCombiAttach, succGprsAttach,succGprsAttachUmts,succGprsAttachVisitor,succGprsDetachSgsn,succGprsDetachSgsnUmts,succImsiAttach, succInterSgsnRaUpdate,succInterSgsnRaUpdateUmts,succInterSgsnRaUpdateVisitor, succIntraSgsnRaUpdate,succIntraSgsnRaUpdateUmts,succPacketSwitchingPagingUmts,unsuccGprsAttachUmts,unsuccPacketSwitchingPaging,unsuccPacketSwitchingPagingUmts,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null from raw_view1
+go
+if exists (select 1 from sysobjects where name="raw_view1" and type="V")
+drop view raw_view1
+go
+LOOP_ISQL1
+
+done < mapping_info
+}
+
+raw_QOS_SM_NON() {
+
+if [ -f /${log_path}/raw_QOS_SM_NON.log ] ; then
+        mv /${log_path}/raw_QOS_SM_NON.log /${log_path}/raw_QOS_SM_NON_bkp.log
+        touch /${log_path}/raw_QOS_SM_NON.log
+fi
+
+echo "To migrate the data for DC_E_SGSN_QOS_SM_NON_RAW from DC_E_SGSN_SGSN_RAW"
+while IFS=, read tabname dateid
+do
+${SYBASE_IQ_PATH} -U${DC_USER} -P${DC_PASSWORD} -S${DWH_NAME_dwhdb} -w999999 << LOOP_ISQL1 -b >> /${log_path}/raw_QOS_SM_NON.log 
+if exists (select 1 from sysobjects where name="raw_view2" and type="V")
+drop view raw_view2
+go
+create view raw_view2 as select OSS_ID,SN,NEUN,NEDN,NESW,SGSN,Identifier,PERIOD_DURATION2,DATE_ID,YEAR_ID,MONTH_ID,DAY_ID,HOUR_ID,DATETIME_ID,MIN_ID,TIMELEVEL,SESSION_ID,BATCH_ID,PERIOD_DURATION,ROWSTATUS,DC_RELEASE,DC_SOURCE,DC_TIMEZONE,DC_SUSPECTFLAG,UTC_DATETIME_ID,discardedSessionMgmnt,gprsSmSgsnDeactivations,gprsSmSgsnUnsuccessfulActivations,gprsSmSgsnUnsuccessfulModifications,QoS_AttActConversationalPdpContext_G,QoS_AttActConversationalPdpContext_U,QoS_AttActInteractivePdpContext_G,QoS_AttActInteractivePdpContext_U,QoS_AttActStreamingPdpContext_G,QoS_AttActStreamingPdpContext_U,QoS_BackgroundAttRabAss_U,QoS_BackgroundReSentRabAss_U,QoS_BackgroundSuccRabAss_U,QoS_ConversationalAttRabAss_U,QoS_ConversationalReSentRabAss_U,QoS_ConversationalSuccRabAss_U,QoS_CurrentGuaranteedBitRate_G,QoS_CurrentGuaranteedBitRate_U,QoS_DLBackgroundPktDiscarded_G,QoS_DLBackgroundPktDiscarded_U,QoS_DLBackgroundPktForwarded_G,QoS_DLBackgroundPktForwarded_U,QoS_DLConversationalPktDiscarded_G,QoS_DLConversationalPktDiscarded_U,QoS_DLConversationalPktForwarded_G,QoS_DLConversationalPktForwarded_U,QoS_DLInteractivePktDiscarded_G,QoS_DLInteractivePktDiscarded_U,QoS_DLInteractivePktForwarded_G,QoS_DLInteractivePktForwarded_U,QoS_DLStreamingPktDiscarded_G,QoS_DLStreamingPktDiscarded_U,QoS_DLStreamingPktForwarded_G,QoS_DLStreamingPktForwarded_U,QoS_GuaranteedBitRateAttempts_G,QoS_GuaranteedBitRateAttempts_U,QoS_GuaranteedBitRateDowngrades_G,QoS_GuaranteedBitRateDowngrades_U,QoS_InteractiveAttRabAss_U,QoS_InteractiveReSentRabAss_U,QoS_InteractiveSuccRabAss_U,QoS_NbrActConversationalPdpContext_G,QoS_NbrActConversationalPdpContext_U,QoS_NbrActInteractivePdpContext_G,QoS_NbrActInteractivePdpContext_U,QoS_NbrActStreamingPdpContext_G,QoS_NbrActStreamingPdpContext_U,QoS_StreamingAttRabAss_U,QoS_StreamingReSentRabAss_U,QoS_StreamingSuccRabAss_U,QoS_ULBackgroundPktForwarded,QoS_ULConversationalPktForwarded,QoS_ULInteractivePktForwarded,QoS_ULStreamingPktForwarded,SM_AttActPdpContext_G,SM_AttActPdpContext_U,SM_AttActPdpContextDyn_G,SM_AttActPdpContextDyn_U,SM_AttActPdpContextSgsnHome_G,SM_AttActPdpContextSgsnHome_U,SM_AttActSecondPdpContext_G,SM_AttActSecondPdpContext_U,SM_AttDeactPdpContextGgsn_G,SM_AttDeactPdpContextGgsn_U,SM_AttDeactPdpContextMs_G,SM_AttDeactPdpContextMs_U,SM_AttDeactPdpContextSgsn_G,SM_AttDeactPdpContextSgsn_U,SM_AttDeactPdpContextSgsnCC38_G,SM_AttDeactPdpContextSgsnCC38_U,SM_AttDeactPdpContextSgsnCC39_G,SM_AttDeactPdpContextSgsnCC39_U,SM_AttModPdpContextMs_G,SM_AttModPdpContextMs_U,SM_AttModPdpContextSgsn_G,SM_AttModPdpContextSgsn_U,SM_AttRabAssignment,SM_AttRabModPS,SM_AttUpdPdpContextGgsn_G,SM_AttUpdPdpContextGgsn_U,SM_AttUpdPdpContextSgsn_G,SM_AttUpdPdpContextSgsn_U,SM_DeactivatedPDPContextOldSgsn_G,SM_DeactivatedPDPContextOldSgsn_U,SM_NbrActivePDPsApprFor3GDT_U,SM_NbrActivePdpPerSgsn_G,SM_NbrActivePdpPerSgsn_U,SM_NbrActPdpContext_G,SM_NbrActPdpContext_U,SM_NbrActSessions,SM_NotDeactivatedPDPContextOldSgsn_G,SM_NotDeactivatedPDPContextOldSgsn_U,SM_PdpContextsLost_G,SM_PdpContextsLost_U,SM_SuccActPdpContext_G,SM_SuccActPdpContext_U,SM_SuccActPdpContextDyn_G,SM_SuccActPdpContextDyn_U,SM_SuccActPdpContextSgsnHome_G,SM_SuccActPdpContextSgsnHome_U,SM_SuccActSecondPdpContext_G,SM_SuccActSecondPdpContext_U,SM_SuccDeactPdpContextGgsn_G,SM_SuccDeactPdpContextGgsn_U,SM_SuccDeactPdpContextMs_G,SM_SuccDeactPdpContextMs_U,SM_SuccDeactPdpContextSgsn_G,SM_SuccDeactPdpContextSgsn_U,SM_SuccModPdpContextMs_G,SM_SuccModPdpContextMs_U,SM_SuccModPdpContextSgsn_G,SM_SuccModPdpContextSgsn_U,SM_SuccRabAssignment,SM_SuccUpdPdpContextGgsn_G,SM_SuccUpdPdpContextGgsn_U,SM_SuccUpdPdpContextSgsn_G,SM_SuccUpdPdpContextSgsn_U,SM_UnsuccActPdpContext_U,SM_UnsuccActPdpContextCamel_G,SM_UnsuccActPdpContextCamel_U,SM_UnsuccActPdpContextCC26_G,SM_UnsuccActPdpContextCC26_U,SM_UnsuccActPdpContextCC27_28_G,SM_UnsuccActPdpContextCC27_28_U,SM_UnsuccActPdpContextCC29_G,SM_UnsuccActPdpContextCC29_U,SM_UnsuccActPdpContextCC32_33_G,SM_UnsuccActPdpContextCC32_33_U,SM_UnsuccActPdpContextCC38_G,SM_UnsuccActPdpContextCC38_U,SM_UnsuccActPdpContextLicenseExceeded from DC_E_SGSN_SGSN_RAW where date_id="$dateid"
+go
+insert into $tabname select OSS_ID,SN,NEUN,NEDN,NESW,SGSN,Identifier,PERIOD_DURATION2,DATE_ID,YEAR_ID,MONTH_ID,DAY_ID,HOUR_ID,DATETIME_ID,MIN_ID,TIMELEVEL,SESSION_ID,BATCH_ID,PERIOD_DURATION,ROWSTATUS,DC_RELEASE,DC_SOURCE,DC_TIMEZONE,DC_SUSPECTFLAG,UTC_DATETIME_ID,discardedSessionMgmnt,gprsSmSgsnDeactivations,gprsSmSgsnUnsuccessfulActivations,gprsSmSgsnUnsuccessfulModifications,QoS_AttActConversationalPdpContext_G,QoS_AttActConversationalPdpContext_U,QoS_AttActInteractivePdpContext_G,QoS_AttActInteractivePdpContext_U,QoS_AttActStreamingPdpContext_G,QoS_AttActStreamingPdpContext_U,QoS_BackgroundAttRabAss_U,QoS_BackgroundReSentRabAss_U,QoS_BackgroundSuccRabAss_U,QoS_ConversationalAttRabAss_U,QoS_ConversationalReSentRabAss_U,QoS_ConversationalSuccRabAss_U,QoS_CurrentGuaranteedBitRate_G,QoS_CurrentGuaranteedBitRate_U,QoS_DLBackgroundPktDiscarded_G,QoS_DLBackgroundPktDiscarded_U,QoS_DLBackgroundPktForwarded_G,QoS_DLBackgroundPktForwarded_U,QoS_DLConversationalPktDiscarded_G,QoS_DLConversationalPktDiscarded_U,QoS_DLConversationalPktForwarded_G,QoS_DLConversationalPktForwarded_U,QoS_DLInteractivePktDiscarded_G,QoS_DLInteractivePktDiscarded_U,QoS_DLInteractivePktForwarded_G,QoS_DLInteractivePktForwarded_U,QoS_DLStreamingPktDiscarded_G,QoS_DLStreamingPktDiscarded_U,QoS_DLStreamingPktForwarded_G,QoS_DLStreamingPktForwarded_U,QoS_GuaranteedBitRateAttempts_G,QoS_GuaranteedBitRateAttempts_U,QoS_GuaranteedBitRateDowngrades_G,QoS_GuaranteedBitRateDowngrades_U,QoS_InteractiveAttRabAss_U,QoS_InteractiveReSentRabAss_U,QoS_InteractiveSuccRabAss_U,QoS_NbrActConversationalPdpContext_G,QoS_NbrActConversationalPdpContext_U,QoS_NbrActInteractivePdpContext_G,QoS_NbrActInteractivePdpContext_U,QoS_NbrActStreamingPdpContext_G,QoS_NbrActStreamingPdpContext_U,QoS_StreamingAttRabAss_U,QoS_StreamingReSentRabAss_U,QoS_StreamingSuccRabAss_U,QoS_ULBackgroundPktForwarded,QoS_ULConversationalPktForwarded,QoS_ULInteractivePktForwarded,QoS_ULStreamingPktForwarded,SM_AttActPdpContext_G,SM_AttActPdpContext_U,SM_AttActPdpContextDyn_G,SM_AttActPdpContextDyn_U,SM_AttActPdpContextSgsnHome_G,SM_AttActPdpContextSgsnHome_U,SM_AttActSecondPdpContext_G,SM_AttActSecondPdpContext_U,SM_AttDeactPdpContextGgsn_G,SM_AttDeactPdpContextGgsn_U,SM_AttDeactPdpContextMs_G,SM_AttDeactPdpContextMs_U,SM_AttDeactPdpContextSgsn_G,SM_AttDeactPdpContextSgsn_U,SM_AttDeactPdpContextSgsnCC38_G,SM_AttDeactPdpContextSgsnCC38_U,SM_AttDeactPdpContextSgsnCC39_G,SM_AttDeactPdpContextSgsnCC39_U,SM_AttModPdpContextMs_G,SM_AttModPdpContextMs_U,SM_AttModPdpContextSgsn_G,SM_AttModPdpContextSgsn_U,SM_AttRabAssignment,SM_AttRabModPS,SM_AttUpdPdpContextGgsn_G,SM_AttUpdPdpContextGgsn_U,SM_AttUpdPdpContextSgsn_G,SM_AttUpdPdpContextSgsn_U,SM_DeactivatedPDPContextOldSgsn_G,SM_DeactivatedPDPContextOldSgsn_U,SM_NbrActivePDPsApprFor3GDT_U,SM_NbrActivePdpPerSgsn_G,SM_NbrActivePdpPerSgsn_U,SM_NbrActPdpContext_G,SM_NbrActPdpContext_U,SM_NbrActSessions,SM_NotDeactivatedPDPContextOldSgsn_G,SM_NotDeactivatedPDPContextOldSgsn_U,SM_PdpContextsLost_G,SM_PdpContextsLost_U,SM_SuccActPdpContext_G,SM_SuccActPdpContext_U,SM_SuccActPdpContextDyn_G,SM_SuccActPdpContextDyn_U,SM_SuccActPdpContextSgsnHome_G,SM_SuccActPdpContextSgsnHome_U,SM_SuccActSecondPdpContext_G,SM_SuccActSecondPdpContext_U,SM_SuccDeactPdpContextGgsn_G,SM_SuccDeactPdpContextGgsn_U,SM_SuccDeactPdpContextMs_G,SM_SuccDeactPdpContextMs_U,SM_SuccDeactPdpContextSgsn_G,SM_SuccDeactPdpContextSgsn_U,SM_SuccModPdpContextMs_G,SM_SuccModPdpContextMs_U,SM_SuccModPdpContextSgsn_G,SM_SuccModPdpContextSgsn_U,SM_SuccRabAssignment,SM_SuccUpdPdpContextGgsn_G,SM_SuccUpdPdpContextGgsn_U,SM_SuccUpdPdpContextSgsn_G,SM_SuccUpdPdpContextSgsn_U,SM_UnsuccActPdpContext_U,SM_UnsuccActPdpContextCamel_G,SM_UnsuccActPdpContextCamel_U,SM_UnsuccActPdpContextCC26_G,SM_UnsuccActPdpContextCC26_U,SM_UnsuccActPdpContextCC27_28_G,SM_UnsuccActPdpContextCC27_28_U,SM_UnsuccActPdpContextCC29_G,SM_UnsuccActPdpContextCC29_U,SM_UnsuccActPdpContextCC32_33_G,SM_UnsuccActPdpContextCC32_33_U,SM_UnsuccActPdpContextCC38_G,SM_UnsuccActPdpContextCC38_U,SM_UnsuccActPdpContextLicenseExceeded,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null from raw_view2
+go
+if exists (select 1 from sysobjects where name="raw_view2" and type="V")
+drop view raw_view2
+go
+LOOP_ISQL1
+
+done < mapping_info
+}
+
+#---------------------------------------------------------------------------------------
+
+count_MM_NON() {
+
+if [ -f /${log_path}/count_MM_NON.log ] ; then
+        mv /${log_path}/day_QOS_SM_NON.log /${log_path}/day_QOS_SM_NON_bkp.log
+        touch /${log_path}/day_QOS_SM_NON.log
+fi
+
+echo "To migrate the data for DC_E_SGSN_SGSN_MM_NON_COUNT from DC_E_SGSN_SGSN_COUNT"
+while IFS=, read tabname dateid
+do
+
+${SYBASE_IQ_PATH} -U${DC_USER} -P${DC_PASSWORD} -S${DWH_NAME_dwhdb} -w999999 << LOOP_ISQL1 -b >> /${log_path}/count_MM_NON.log
+if exists (select 1 from sysobjects where name="count_view1" and type="V")
+drop view count_view1
+go
+create view count_view1 as select OSS_ID,SN,NEUN,NEDN,NESW,SGSN,Identifier,PERIOD_DURATION2,DATE_ID,YEAR_ID,MONTH_ID,DAY_ID,HOUR_ID,DATETIME_ID,MIN_ID,TIMELEVEL,SESSION_ID,BATCH_ID,PERIOD_DURATION,ROWSTATUS,DC_RELEASE,DC_SOURCE,DC_TIMEZONE,DC_SUSPECTFLAG,UTC_DATETIME_ID,attAuthInSgsn,attCombiAttach,attCombiDetachMs, attGprsAttach,attGprsAttachUmts,attGprsAttachVisitor,attGprsDetachMs,attGprsDetachMsUmts,attGprsDetachSgsn,attGprsDetachSgsnUmts,attImsiAttach,attImsiDetachMs,attInterSgsnRaUpdate, attInterSgsnRaUpdateUmts,attInterSgsnRaUpdateVisitor,attIntraSgsnRaUpdate,attIntraSgsnRaUpdateUmts,attPacketSwitchingPaging,attPacketSwitchingPagingUmts,discardedAttachMsError,discardedCombiAttach, discardedCombiRaUpdate,discardedDetach,discardedGprsAttach,discardedPayloadPacket,discardedRaUpdate, gprsMmSgsnPagingProcedures,gprsMmSgsnRejectedByAdmissionControl,gprsMmSgsnSuccessfulPagingProcedures, gprsMmSgsnUnsuccessfulAttachRequests,gprsMmSgsnUnsuccessfulPagingProcedures,ISYSC_AttIntraSgsnGsmUmtsRau, ISYSC_AttIntraSgsnUmtsGsmRau,ISYSC_SuccIntraSgsnGsmUmtsRau,ISYSC_SuccIntraSgsnUmtsGsmRau,ISYSC_UnsuccIntraSgsnGsmUmtsRauCSPSCoord, MM_AttachedLost_G,MM_AttachedLost_U,MM_AttAttachAcceptNon3GPPCompliant_G,MM_AttAttachAcceptNon3GPPCompliant_U, MM_AttAuthCiphReqNon3GPPCompliant_G,MM_AttAuthCiphReqNon3GPPCompliant_U,MM_AttChangeOfLocalTime_G, MM_AttChangeOfLocalTime_U,MM_AttDetachInactiveSub_G,MM_AttDetachInactiveSub_U,MM_AttRauAcceptNon3GPPCompliant_G,MM_AttRauAcceptNon3GPPCompliant_U,MM_AttServiceReqData_U, MM_AttServiceRequest_U,MM_NbrActAttachedSub_G,MM_NbrActAttachedSub_U,MM_NbrCamelSub_G,MM_NbrCamelSub_U,MM_nbrDetachedInactiveSub_G,MM_nbrDetachedInactiveSub_U, MM_NbrHomeSub_G,MM_NbrHomeSub_U,MM_NbrSubPmmConnected,MM_NbrVisitingForeign_G,MM_NbrVisitingForeign_U,MM_NbrVisitingNatSub_G,MM_NbrVisitingNatSub_U, MM_UnsuccAttachCC11_G,MM_UnsuccAttachCC11_U,MM_UnsuccAttachCC13_G,MM_UnsuccAttachCC13_U, MM_UnsuccAttachCC14_G,MM_UnsuccAttachCC14_U,MM_UnsuccAttachCC15_G,MM_UnsuccAttachCC15_U, MM_UnsuccAttachCC17_G,MM_UnsuccAttachCC17_U,MM_UnsuccAttachCC22_G,MM_UnsuccAttachCC22_U,MM_UnsuccAttachCC7_G,MM_UnsuccAttachCC7_U,MM_UnsuccAttachCC8_G, MM_UnsuccAttachCC8_U,MM_UnsuccAttachCSPSCoord_U,MM_UnsuccAttachLicenseExceeded,MM_UnsuccInterSgsnRau_G, MM_UnsuccInterSgsnRau_U,MM_UnsuccInterSgsnRauCC10_G,MM_UnsuccInterSgsnRauCC10_U,MM_UnsuccInterSgsnRauCC14_G, MM_UnsuccInterSgsnRauCC14_U,MM_UnsuccInterSgsnRauCC15_G,MM_UnsuccInterSgsnRauCC15_U, MM_UnsuccInterSgsnRauCC17_G,MM_UnsuccInterSgsnRauCC17_U,MM_UnsuccInterSgsnRauCC9_G,MM_UnsuccInterSgsnRauCC9_U, MM_UnsuccIntraSgsnRau_G,MM_UnsuccIntraSgsnRau_U,MM_UnsuccIntraSgsnRauCC14_G,MM_UnsuccIntraSgsnRauCC14_U,MM_UnsuccIntraSgsnRauCC15_G,MM_UnsuccIntraSgsnRauCC15_U, MM_UnsuccIntraSgsnRauCC17_G,MM_UnsuccIntraSgsnRauCC17_U,MM_UnsuccIntraSgsnRAUCSPSCoord_U,MM_UnsuccISRAUCSPSCoord_U, MM_UnsuccServiceReq_U,nbrOfSubReady,nbrOfSubStandby,subscribersInTransitionalState,succAuthInSgsn,succCombiAttach, succGprsAttach,succGprsAttachUmts,succGprsAttachVisitor,succGprsDetachSgsn,succGprsDetachSgsnUmts,succImsiAttach, succInterSgsnRaUpdate,succInterSgsnRaUpdateUmts,succInterSgsnRaUpdateVisitor, succIntraSgsnRaUpdate,succIntraSgsnRaUpdateUmts,succPacketSwitchingPagingUmts,unsuccGprsAttachUmts,unsuccPacketSwitchingPaging,unsuccPacketSwitchingPagingUmts from DC_E_SGSN_SGSN_COUNT where date_id="$dateid"
+go
+insert into $tabname select OSS_ID,SN,NEUN,NEDN,NESW,SGSN,Identifier,PERIOD_DURATION2,DATE_ID,YEAR_ID,MONTH_ID,DAY_ID,HOUR_ID,DATETIME_ID,MIN_ID,TIMELEVEL,SESSION_ID,BATCH_ID,PERIOD_DURATION,ROWSTATUS,DC_RELEASE,DC_SOURCE,DC_TIMEZONE,DC_SUSPECTFLAG,UTC_DATETIME_ID,attAuthInSgsn,attCombiAttach,attCombiDetachMs, attGprsAttach,attGprsAttachUmts,attGprsAttachVisitor,attGprsDetachMs,attGprsDetachMsUmts,attGprsDetachSgsn,attGprsDetachSgsnUmts,attImsiAttach,attImsiDetachMs,attInterSgsnRaUpdate, attInterSgsnRaUpdateUmts,attInterSgsnRaUpdateVisitor,attIntraSgsnRaUpdate,attIntraSgsnRaUpdateUmts,attPacketSwitchingPaging,attPacketSwitchingPagingUmts,discardedAttachMsError,discardedCombiAttach, discardedCombiRaUpdate,discardedDetach,discardedGprsAttach,discardedPayloadPacket,discardedRaUpdate, gprsMmSgsnPagingProcedures,gprsMmSgsnRejectedByAdmissionControl,gprsMmSgsnSuccessfulPagingProcedures, gprsMmSgsnUnsuccessfulAttachRequests,gprsMmSgsnUnsuccessfulPagingProcedures,ISYSC_AttIntraSgsnGsmUmtsRau, ISYSC_AttIntraSgsnUmtsGsmRau,ISYSC_SuccIntraSgsnGsmUmtsRau,ISYSC_SuccIntraSgsnUmtsGsmRau,ISYSC_UnsuccIntraSgsnGsmUmtsRauCSPSCoord, MM_AttachedLost_G,MM_AttachedLost_U,MM_AttAttachAcceptNon3GPPCompliant_G,MM_AttAttachAcceptNon3GPPCompliant_U, MM_AttAuthCiphReqNon3GPPCompliant_G,MM_AttAuthCiphReqNon3GPPCompliant_U,MM_AttChangeOfLocalTime_G, MM_AttChangeOfLocalTime_U,MM_AttDetachInactiveSub_G,MM_AttDetachInactiveSub_U,MM_AttRauAcceptNon3GPPCompliant_G,MM_AttRauAcceptNon3GPPCompliant_U,MM_AttServiceReqData_U, MM_AttServiceRequest_U,MM_NbrActAttachedSub_G,MM_NbrActAttachedSub_U,MM_NbrCamelSub_G,MM_NbrCamelSub_U,MM_nbrDetachedInactiveSub_G,MM_nbrDetachedInactiveSub_U, MM_NbrHomeSub_G,MM_NbrHomeSub_U,MM_NbrSubPmmConnected,MM_NbrVisitingForeign_G,MM_NbrVisitingForeign_U,MM_NbrVisitingNatSub_G,MM_NbrVisitingNatSub_U, MM_UnsuccAttachCC11_G,MM_UnsuccAttachCC11_U,MM_UnsuccAttachCC13_G,MM_UnsuccAttachCC13_U, MM_UnsuccAttachCC14_G,MM_UnsuccAttachCC14_U,MM_UnsuccAttachCC15_G,MM_UnsuccAttachCC15_U, MM_UnsuccAttachCC17_G,MM_UnsuccAttachCC17_U,MM_UnsuccAttachCC22_G,MM_UnsuccAttachCC22_U,MM_UnsuccAttachCC7_G,MM_UnsuccAttachCC7_U,MM_UnsuccAttachCC8_G, MM_UnsuccAttachCC8_U,MM_UnsuccAttachCSPSCoord_U,MM_UnsuccAttachLicenseExceeded,MM_UnsuccInterSgsnRau_G, MM_UnsuccInterSgsnRau_U,MM_UnsuccInterSgsnRauCC10_G,MM_UnsuccInterSgsnRauCC10_U,MM_UnsuccInterSgsnRauCC14_G, MM_UnsuccInterSgsnRauCC14_U,MM_UnsuccInterSgsnRauCC15_G,MM_UnsuccInterSgsnRauCC15_U, MM_UnsuccInterSgsnRauCC17_G,MM_UnsuccInterSgsnRauCC17_U,MM_UnsuccInterSgsnRauCC9_G,MM_UnsuccInterSgsnRauCC9_U, MM_UnsuccIntraSgsnRau_G,MM_UnsuccIntraSgsnRau_U,MM_UnsuccIntraSgsnRauCC14_G,MM_UnsuccIntraSgsnRauCC14_U,MM_UnsuccIntraSgsnRauCC15_G,MM_UnsuccIntraSgsnRauCC15_U, MM_UnsuccIntraSgsnRauCC17_G,MM_UnsuccIntraSgsnRauCC17_U,MM_UnsuccIntraSgsnRAUCSPSCoord_U,MM_UnsuccISRAUCSPSCoord_U, MM_UnsuccServiceReq_U,nbrOfSubReady,nbrOfSubStandby,subscribersInTransitionalState,succAuthInSgsn,succCombiAttach, succGprsAttach,succGprsAttachUmts,succGprsAttachVisitor,succGprsDetachSgsn,succGprsDetachSgsnUmts,succImsiAttach, succInterSgsnRaUpdate,succInterSgsnRaUpdateUmts,succInterSgsnRaUpdateVisitor, succIntraSgsnRaUpdate,succIntraSgsnRaUpdateUmts,succPacketSwitchingPagingUmts,unsuccGprsAttachUmts,unsuccPacketSwitchingPaging,unsuccPacketSwitchingPagingUmts,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null from count_view1
+go
+if exists (select 1 from sysobjects where name="count_view1" and type="V")
+drop view count_view1
+go
+LOOP_ISQL1
+
+done < mapping_info
+}
+
+count_QOS_SM_NON() {
+
+if [ -f /${log_path}/count_QOS_SM_NON.log ] ; then
+        mv /${log_path}/count_QOS_SM_NON.log /${log_path}/count_QOS_SM_NON_bkp.log
+        touch /${log_path}/count_QOS_SM_NON.log
+fi
+
+echo "To migrate the data for DC_E_SGSN_QOS_SM_NON_COUNT from DC_E_SGSN_SGSN_COUNT"
+while IFS=, read tabname dateid
+do
+
+${SYBASE_IQ_PATH} -U${DC_USER} -P${DC_PASSWORD} -S${DWH_NAME_dwhdb} -w99999 << LOOP_ISQL1 -b >> /${log_path}/count_QOS_SM_NON.log
+if exists (select 1 from sysobjects where name="count_view2" and type="V")
+drop view count_view2
+go
+create view count_view2 as select OSS_ID,SN,NEUN,NEDN,NESW,SGSN,Identifier,PERIOD_DURATION2,DATE_ID,YEAR_ID,MONTH_ID,DAY_ID,HOUR_ID,DATETIME_ID,MIN_ID,TIMELEVEL,SESSION_ID,BATCH_ID,PERIOD_DURATION,ROWSTATUS,DC_RELEASE,DC_SOURCE,DC_TIMEZONE,DC_SUSPECTFLAG,UTC_DATETIME_ID,discardedSessionMgmnt,gprsSmSgsnDeactivations,gprsSmSgsnUnsuccessfulActivations,gprsSmSgsnUnsuccessfulModifications,QoS_AttActConversationalPdpContext_G, QoS_AttActConversationalPdpContext_U,QoS_AttActInteractivePdpContext_G,QoS_AttActInteractivePdpContext_U,QoS_AttActStreamingPdpContext_G,QoS_AttActStreamingPdpContext_U,QoS_BackgroundAttRabAss_U, QoS_BackgroundReSentRabAss_U,QoS_BackgroundSuccRabAss_U,QoS_ConversationalAttRabAss_U,QoS_ConversationalReSentRabAss_U,QoS_ConversationalSuccRabAss_U,QoS_CurrentGuaranteedBitRate_G, QoS_CurrentGuaranteedBitRate_U,QoS_DLBackgroundPktDiscarded_G,QoS_DLBackgroundPktDiscarded_U,QoS_DLBackgroundPktForwarded_G,QoS_DLBackgroundPktForwarded_U,QoS_DLConversationalPktDiscarded_G, QoS_DLConversationalPktDiscarded_U,QoS_DLConversationalPktForwarded_G,QoS_DLConversationalPktForwarded_U,QoS_DLInteractivePktDiscarded_G,QoS_DLInteractivePktDiscarded_U, QoS_DLInteractivePktForwarded_G,QoS_DLInteractivePktForwarded_U,QoS_DLStreamingPktDiscarded_G,QoS_DLStreamingPktDiscarded_U,QoS_DLStreamingPktForwarded_G,QoS_DLStreamingPktForwarded_U, QoS_GuaranteedBitRateAttempts_G,QoS_GuaranteedBitRateAttempts_U,QoS_GuaranteedBitRateDowngrades_G,QoS_GuaranteedBitRateDowngrades_U,QoS_InteractiveAttRabAss_U,QoS_InteractiveReSentRabAss_U, QoS_InteractiveSuccRabAss_U,QoS_NbrActConversationalPdpContext_G,QoS_NbrActConversationalPdpContext_U,QoS_NbrActInteractivePdpContext_G,QoS_NbrActInteractivePdpContext_U, QoS_NbrActStreamingPdpContext_G,QoS_NbrActStreamingPdpContext_U,QoS_StreamingAttRabAss_U,QoS_StreamingReSentRabAss_U,QoS_StreamingSuccRabAss_U,QoS_ULBackgroundPktForwarded, QoS_ULConversationalPktForwarded,QoS_ULInteractivePktForwarded,QoS_ULStreamingPktForwarded,SM_AttActPdpContext_G,SM_AttActPdpContext_U,SM_AttActPdpContextDyn_G,SM_AttActPdpContextDyn_U, SM_AttActPdpContextSgsnHome_G,SM_AttActPdpContextSgsnHome_U,SM_AttActSecondPdpContext_G,SM_AttActSecondPdpContext_U,SM_AttDeactPdpContextGgsn_G,SM_AttDeactPdpContextGgsn_U, SM_AttDeactPdpContextMs_G,SM_AttDeactPdpContextMs_U,SM_AttDeactPdpContextSgsn_G,SM_AttDeactPdpContextSgsn_U,SM_AttDeactPdpContextSgsnCC38_G,SM_AttDeactPdpContextSgsnCC38_U, SM_AttDeactPdpContextSgsnCC39_G,SM_AttDeactPdpContextSgsnCC39_U,SM_AttModPdpContextMs_G,SM_AttModPdpContextMs_U,SM_AttModPdpContextSgsn_G,SM_AttModPdpContextSgsn_U, SM_AttRabAssignment,SM_AttRabModPS,SM_AttUpdPdpContextGgsn_G,SM_AttUpdPdpContextGgsn_U,SM_AttUpdPdpContextSgsn_G,SM_AttUpdPdpContextSgsn_U,SM_DeactivatedPDPContextOldSgsn_G, SM_DeactivatedPDPContextOldSgsn_U,SM_NbrActivePDPsApprFor3GDT_U,SM_NbrActivePdpPerSgsn_G,SM_NbrActivePdpPerSgsn_U,SM_NbrActPdpContext_G,SM_NbrActPdpContext_U,SM_NbrActSessions, SM_NotDeactivatedPDPContextOldSgsn_G,SM_NotDeactivatedPDPContextOldSgsn_U,SM_PdpContextsLost_G,SM_PdpContextsLost_U,SM_SuccActPdpContext_G,SM_SuccActPdpContext_U, SM_SuccActPdpContextDyn_G,SM_SuccActPdpContextDyn_U,SM_SuccActPdpContextSgsnHome_G,SM_SuccActPdpContextSgsnHome_U,SM_SuccActSecondPdpContext_G,SM_SuccActSecondPdpContext_U, SM_SuccDeactPdpContextGgsn_G,SM_SuccDeactPdpContextGgsn_U,SM_SuccDeactPdpContextMs_G,SM_SuccDeactPdpContextMs_U,SM_SuccDeactPdpContextSgsn_G,SM_SuccDeactPdpContextSgsn_U, SM_SuccModPdpContextMs_G,SM_SuccModPdpContextMs_U,SM_SuccModPdpContextSgsn_G,SM_SuccModPdpContextSgsn_U,SM_SuccRabAssignment,SM_SuccUpdPdpContextGgsn_G, SM_SuccUpdPdpContextGgsn_U,SM_SuccUpdPdpContextSgsn_G,SM_SuccUpdPdpContextSgsn_U,SM_UnsuccActPdpContext_U,SM_UnsuccActPdpContextCamel_G,SM_UnsuccActPdpContextCamel_U, SM_UnsuccActPdpContextCC26_G,SM_UnsuccActPdpContextCC26_U,SM_UnsuccActPdpContextCC27_28_G,SM_UnsuccActPdpContextCC27_28_U,SM_UnsuccActPdpContextCC29_G, SM_UnsuccActPdpContextCC29_U,SM_UnsuccActPdpContextCC32_33_G,SM_UnsuccActPdpContextCC32_33_U,SM_UnsuccActPdpContextCC38_G,SM_UnsuccActPdpContextCC38_U, SM_UnsuccActPdpContextLicenseExceeded from DC_E_SGSN_SGSN_COUNT where date_id="$dateid"
+go
+insert into $tabname select OSS_ID,SN,NEUN,NEDN,NESW,SGSN,Identifier,PERIOD_DURATION2,DATE_ID,YEAR_ID,MONTH_ID,DAY_ID,HOUR_ID,DATETIME_ID,MIN_ID,TIMELEVEL,SESSION_ID,BATCH_ID,PERIOD_DURATION,ROWSTATUS,DC_RELEASE,DC_SOURCE,DC_TIMEZONE,DC_SUSPECTFLAG,UTC_DATETIME_ID,discardedSessionMgmnt,gprsSmSgsnDeactivations,gprsSmSgsnUnsuccessfulActivations,gprsSmSgsnUnsuccessfulModifications,QoS_AttActConversationalPdpContext_G, QoS_AttActConversationalPdpContext_U,QoS_AttActInteractivePdpContext_G,QoS_AttActInteractivePdpContext_U,QoS_AttActStreamingPdpContext_G,QoS_AttActStreamingPdpContext_U,QoS_BackgroundAttRabAss_U, QoS_BackgroundReSentRabAss_U,QoS_BackgroundSuccRabAss_U,QoS_ConversationalAttRabAss_U,QoS_ConversationalReSentRabAss_U,QoS_ConversationalSuccRabAss_U,QoS_CurrentGuaranteedBitRate_G, QoS_CurrentGuaranteedBitRate_U,QoS_DLBackgroundPktDiscarded_G,QoS_DLBackgroundPktDiscarded_U,QoS_DLBackgroundPktForwarded_G,QoS_DLBackgroundPktForwarded_U,QoS_DLConversationalPktDiscarded_G, QoS_DLConversationalPktDiscarded_U,QoS_DLConversationalPktForwarded_G,QoS_DLConversationalPktForwarded_U,QoS_DLInteractivePktDiscarded_G,QoS_DLInteractivePktDiscarded_U, QoS_DLInteractivePktForwarded_G,QoS_DLInteractivePktForwarded_U,QoS_DLStreamingPktDiscarded_G,QoS_DLStreamingPktDiscarded_U,QoS_DLStreamingPktForwarded_G,QoS_DLStreamingPktForwarded_U, QoS_GuaranteedBitRateAttempts_G,QoS_GuaranteedBitRateAttempts_U,QoS_GuaranteedBitRateDowngrades_G,QoS_GuaranteedBitRateDowngrades_U,QoS_InteractiveAttRabAss_U,QoS_InteractiveReSentRabAss_U, QoS_InteractiveSuccRabAss_U,QoS_NbrActConversationalPdpContext_G,QoS_NbrActConversationalPdpContext_U,QoS_NbrActInteractivePdpContext_G,QoS_NbrActInteractivePdpContext_U, QoS_NbrActStreamingPdpContext_G,QoS_NbrActStreamingPdpContext_U,QoS_StreamingAttRabAss_U,QoS_StreamingReSentRabAss_U,QoS_StreamingSuccRabAss_U,QoS_ULBackgroundPktForwarded, QoS_ULConversationalPktForwarded,QoS_ULInteractivePktForwarded,QoS_ULStreamingPktForwarded,SM_AttActPdpContext_G,SM_AttActPdpContext_U,SM_AttActPdpContextDyn_G,SM_AttActPdpContextDyn_U, SM_AttActPdpContextSgsnHome_G,SM_AttActPdpContextSgsnHome_U,SM_AttActSecondPdpContext_G,SM_AttActSecondPdpContext_U,SM_AttDeactPdpContextGgsn_G,SM_AttDeactPdpContextGgsn_U, SM_AttDeactPdpContextMs_G,SM_AttDeactPdpContextMs_U,SM_AttDeactPdpContextSgsn_G,SM_AttDeactPdpContextSgsn_U,SM_AttDeactPdpContextSgsnCC38_G,SM_AttDeactPdpContextSgsnCC38_U, SM_AttDeactPdpContextSgsnCC39_G,SM_AttDeactPdpContextSgsnCC39_U,SM_AttModPdpContextMs_G,SM_AttModPdpContextMs_U,SM_AttModPdpContextSgsn_G,SM_AttModPdpContextSgsn_U, SM_AttRabAssignment,SM_AttRabModPS,SM_AttUpdPdpContextGgsn_G,SM_AttUpdPdpContextGgsn_U,SM_AttUpdPdpContextSgsn_G,SM_AttUpdPdpContextSgsn_U,SM_DeactivatedPDPContextOldSgsn_G, SM_DeactivatedPDPContextOldSgsn_U,SM_NbrActivePDPsApprFor3GDT_U,SM_NbrActivePdpPerSgsn_G,SM_NbrActivePdpPerSgsn_U,SM_NbrActPdpContext_G,SM_NbrActPdpContext_U,SM_NbrActSessions, SM_NotDeactivatedPDPContextOldSgsn_G,SM_NotDeactivatedPDPContextOldSgsn_U,SM_PdpContextsLost_G,SM_PdpContextsLost_U,SM_SuccActPdpContext_G,SM_SuccActPdpContext_U, SM_SuccActPdpContextDyn_G,SM_SuccActPdpContextDyn_U,SM_SuccActPdpContextSgsnHome_G,SM_SuccActPdpContextSgsnHome_U,SM_SuccActSecondPdpContext_G,SM_SuccActSecondPdpContext_U, SM_SuccDeactPdpContextGgsn_G,SM_SuccDeactPdpContextGgsn_U,SM_SuccDeactPdpContextMs_G,SM_SuccDeactPdpContextMs_U,SM_SuccDeactPdpContextSgsn_G,SM_SuccDeactPdpContextSgsn_U, SM_SuccModPdpContextMs_G,SM_SuccModPdpContextMs_U,SM_SuccModPdpContextSgsn_G,SM_SuccModPdpContextSgsn_U,SM_SuccRabAssignment,SM_SuccUpdPdpContextGgsn_G, SM_SuccUpdPdpContextGgsn_U,SM_SuccUpdPdpContextSgsn_G,SM_SuccUpdPdpContextSgsn_U,SM_UnsuccActPdpContext_U,SM_UnsuccActPdpContextCamel_G,SM_UnsuccActPdpContextCamel_U, SM_UnsuccActPdpContextCC26_G,SM_UnsuccActPdpContextCC26_U,SM_UnsuccActPdpContextCC27_28_G,SM_UnsuccActPdpContextCC27_28_U,SM_UnsuccActPdpContextCC29_G, SM_UnsuccActPdpContextCC29_U,SM_UnsuccActPdpContextCC32_33_G,SM_UnsuccActPdpContextCC32_33_U,SM_UnsuccActPdpContextCC38_G,SM_UnsuccActPdpContextCC38_U, SM_UnsuccActPdpContextLicenseExceeded,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null from count_view2
+go
+if exists (select 1 from sysobjects where name="count_view2" and type="V")
+drop view count_view2
+go
+LOOP_ISQL1
+
+done < mapping_info
+}
+
+#---------------------------------------------------------------------------------------
+
+daybh_MM_NON() {
+
+if [ -f /${log_path}/daybh_MM_NON.log ] ; then
+        mv /${log_path}/daybh_MM_NON.log /${log_path}/daybh_MM_NON_bkp.log
+        touch /${log_path}/daybh_MM_NON.log
+fi
+
+echo "To migrate the data for DC_E_SGSN_SGSN_MM_NON_DAYBH from DC_E_SGSN_SGSN_DAY"
+while IFS=, read tabname dateid
+do
+
+${SYBASE_IQ_PATH} -U${DC_USER} -P${DC_PASSWORD} -S${DWH_NAME_dwhdb} -w99999 << LOOP_ISQL1 -b >> /${log_path}/daybh_MM_NON.log 
+if exists (select 1 from sysobjects where name="daybh_view1" and type="V")
+drop view daybh_view1
+go
+create view daybh_view1 as select OSS_ID,SN,NEUN,NEDN,NESW,SGSN,Identifier,PERIOD_DURATION2,DATE_ID,YEAR_ID,MONTH_ID,DAY_ID,MIN_ID,BHTYPE,BUSYHOUR,BHCLASS,TIMELEVEL,SESSION_ID,BATCH_ID,PERIOD_DURATION,ROWSTATUS,DC_RELEASE,DC_SOURCE,DC_TIMEZONE,DC_SUSPECTFLAG,attAuthInSgsn,attCombiAttach,attCombiDetachMs, attGprsAttach,attGprsAttachUmts,attGprsAttachVisitor,attGprsDetachMs,attGprsDetachMsUmts,attGprsDetachSgsn,attGprsDetachSgsnUmts,attImsiAttach,attImsiDetachMs,attInterSgsnRaUpdate, attInterSgsnRaUpdateUmts,attInterSgsnRaUpdateVisitor,attIntraSgsnRaUpdate,attIntraSgsnRaUpdateUmts,attPacketSwitchingPaging,attPacketSwitchingPagingUmts,discardedAttachMsError,discardedCombiAttach, discardedCombiRaUpdate,discardedDetach,discardedGprsAttach,discardedPayloadPacket,discardedRaUpdate, gprsMmSgsnPagingProcedures,gprsMmSgsnRejectedByAdmissionControl,gprsMmSgsnSuccessfulPagingProcedures, gprsMmSgsnUnsuccessfulAttachRequests,gprsMmSgsnUnsuccessfulPagingProcedures,ISYSC_AttIntraSgsnGsmUmtsRau, ISYSC_AttIntraSgsnUmtsGsmRau,ISYSC_SuccIntraSgsnGsmUmtsRau,ISYSC_SuccIntraSgsnUmtsGsmRau,ISYSC_UnsuccIntraSgsnGsmUmtsRauCSPSCoord, MM_AttachedLost_G,MM_AttachedLost_U,MM_AttAttachAcceptNon3GPPCompliant_G,MM_AttAttachAcceptNon3GPPCompliant_U, MM_AttAuthCiphReqNon3GPPCompliant_G,MM_AttAuthCiphReqNon3GPPCompliant_U,MM_AttChangeOfLocalTime_G, MM_AttChangeOfLocalTime_U,MM_AttDetachInactiveSub_G,MM_AttDetachInactiveSub_U,MM_AttRauAcceptNon3GPPCompliant_G,MM_AttRauAcceptNon3GPPCompliant_U,MM_AttServiceReqData_U, MM_AttServiceRequest_U,MM_NbrActAttachedSub_G,MM_NbrActAttachedSub_U,MM_NbrCamelSub_G,MM_NbrCamelSub_U,MM_nbrDetachedInactiveSub_G,MM_nbrDetachedInactiveSub_U, MM_NbrHomeSub_G,MM_NbrHomeSub_U,MM_NbrSubPmmConnected,MM_NbrVisitingForeign_G,MM_NbrVisitingForeign_U,MM_NbrVisitingNatSub_G,MM_NbrVisitingNatSub_U, MM_UnsuccAttachCC11_G,MM_UnsuccAttachCC11_U,MM_UnsuccAttachCC13_G,MM_UnsuccAttachCC13_U, MM_UnsuccAttachCC14_G,MM_UnsuccAttachCC14_U,MM_UnsuccAttachCC15_G,MM_UnsuccAttachCC15_U, MM_UnsuccAttachCC17_G,MM_UnsuccAttachCC17_U,MM_UnsuccAttachCC22_G,MM_UnsuccAttachCC22_U,MM_UnsuccAttachCC7_G,MM_UnsuccAttachCC7_U,MM_UnsuccAttachCC8_G, MM_UnsuccAttachCC8_U,MM_UnsuccAttachCSPSCoord_U,MM_UnsuccAttachLicenseExceeded,MM_UnsuccInterSgsnRau_G, MM_UnsuccInterSgsnRau_U,MM_UnsuccInterSgsnRauCC10_G,MM_UnsuccInterSgsnRauCC10_U,MM_UnsuccInterSgsnRauCC14_G, MM_UnsuccInterSgsnRauCC14_U,MM_UnsuccInterSgsnRauCC15_G,MM_UnsuccInterSgsnRauCC15_U, MM_UnsuccInterSgsnRauCC17_G,MM_UnsuccInterSgsnRauCC17_U,MM_UnsuccInterSgsnRauCC9_G,MM_UnsuccInterSgsnRauCC9_U, MM_UnsuccIntraSgsnRau_G,MM_UnsuccIntraSgsnRau_U,MM_UnsuccIntraSgsnRauCC14_G,MM_UnsuccIntraSgsnRauCC14_U,MM_UnsuccIntraSgsnRauCC15_G,MM_UnsuccIntraSgsnRauCC15_U, MM_UnsuccIntraSgsnRauCC17_G,MM_UnsuccIntraSgsnRauCC17_U,MM_UnsuccIntraSgsnRAUCSPSCoord_U,MM_UnsuccISRAUCSPSCoord_U, MM_UnsuccServiceReq_U,nbrOfSubReady,nbrOfSubStandby,subscribersInTransitionalState,succAuthInSgsn,succCombiAttach, succGprsAttach,succGprsAttachUmts,succGprsAttachVisitor,succGprsDetachSgsn,succGprsDetachSgsnUmts,succImsiAttach, succInterSgsnRaUpdate,succInterSgsnRaUpdateUmts,succInterSgsnRaUpdateVisitor, succIntraSgsnRaUpdate,succIntraSgsnRaUpdateUmts,succPacketSwitchingPagingUmts,unsuccGprsAttachUmts,unsuccPacketSwitchingPaging,unsuccPacketSwitchingPagingUmts from DC_E_SGSN_SGSN_DAYBH where date_id="$dateid"
+go
+insert into $tabname select OSS_ID,SN,NEUN,NEDN,NESW,SGSN,Identifier,PERIOD_DURATION2,DATE_ID,YEAR_ID,MONTH_ID,DAY_ID,MIN_ID,BHTYPE,BUSYHOUR,BHCLASS,TIMELEVEL,SESSION_ID,BATCH_ID,PERIOD_DURATION,ROWSTATUS,DC_RELEASE,DC_SOURCE,DC_TIMEZONE,DC_SUSPECTFLAG,attAuthInSgsn,attCombiAttach,attCombiDetachMs, attGprsAttach,attGprsAttachUmts,attGprsAttachVisitor,attGprsDetachMs,attGprsDetachMsUmts,attGprsDetachSgsn,attGprsDetachSgsnUmts,attImsiAttach,attImsiDetachMs,attInterSgsnRaUpdate, attInterSgsnRaUpdateUmts,attInterSgsnRaUpdateVisitor,attIntraSgsnRaUpdate,attIntraSgsnRaUpdateUmts,attPacketSwitchingPaging,attPacketSwitchingPagingUmts,discardedAttachMsError,discardedCombiAttach, discardedCombiRaUpdate,discardedDetach,discardedGprsAttach,discardedPayloadPacket,discardedRaUpdate, gprsMmSgsnPagingProcedures,gprsMmSgsnRejectedByAdmissionControl,gprsMmSgsnSuccessfulPagingProcedures, gprsMmSgsnUnsuccessfulAttachRequests,gprsMmSgsnUnsuccessfulPagingProcedures,ISYSC_AttIntraSgsnGsmUmtsRau, ISYSC_AttIntraSgsnUmtsGsmRau,ISYSC_SuccIntraSgsnGsmUmtsRau,ISYSC_SuccIntraSgsnUmtsGsmRau,ISYSC_UnsuccIntraSgsnGsmUmtsRauCSPSCoord, MM_AttachedLost_G,MM_AttachedLost_U,MM_AttAttachAcceptNon3GPPCompliant_G,MM_AttAttachAcceptNon3GPPCompliant_U, MM_AttAuthCiphReqNon3GPPCompliant_G,MM_AttAuthCiphReqNon3GPPCompliant_U,MM_AttChangeOfLocalTime_G, MM_AttChangeOfLocalTime_U,MM_AttDetachInactiveSub_G,MM_AttDetachInactiveSub_U,MM_AttRauAcceptNon3GPPCompliant_G,MM_AttRauAcceptNon3GPPCompliant_U,MM_AttServiceReqData_U, MM_AttServiceRequest_U,MM_NbrActAttachedSub_G,MM_NbrActAttachedSub_U,MM_NbrCamelSub_G,MM_NbrCamelSub_U,MM_nbrDetachedInactiveSub_G,MM_nbrDetachedInactiveSub_U, MM_NbrHomeSub_G,MM_NbrHomeSub_U,MM_NbrSubPmmConnected,MM_NbrVisitingForeign_G,MM_NbrVisitingForeign_U,MM_NbrVisitingNatSub_G,MM_NbrVisitingNatSub_U, MM_UnsuccAttachCC11_G,MM_UnsuccAttachCC11_U,MM_UnsuccAttachCC13_G,MM_UnsuccAttachCC13_U, MM_UnsuccAttachCC14_G,MM_UnsuccAttachCC14_U,MM_UnsuccAttachCC15_G,MM_UnsuccAttachCC15_U, MM_UnsuccAttachCC17_G,MM_UnsuccAttachCC17_U,MM_UnsuccAttachCC22_G,MM_UnsuccAttachCC22_U,MM_UnsuccAttachCC7_G,MM_UnsuccAttachCC7_U,MM_UnsuccAttachCC8_G, MM_UnsuccAttachCC8_U,MM_UnsuccAttachCSPSCoord_U,MM_UnsuccAttachLicenseExceeded,MM_UnsuccInterSgsnRau_G, MM_UnsuccInterSgsnRau_U,MM_UnsuccInterSgsnRauCC10_G,MM_UnsuccInterSgsnRauCC10_U,MM_UnsuccInterSgsnRauCC14_G, MM_UnsuccInterSgsnRauCC14_U,MM_UnsuccInterSgsnRauCC15_G,MM_UnsuccInterSgsnRauCC15_U, MM_UnsuccInterSgsnRauCC17_G,MM_UnsuccInterSgsnRauCC17_U,MM_UnsuccInterSgsnRauCC9_G,MM_UnsuccInterSgsnRauCC9_U, MM_UnsuccIntraSgsnRau_G,MM_UnsuccIntraSgsnRau_U,MM_UnsuccIntraSgsnRauCC14_G,MM_UnsuccIntraSgsnRauCC14_U,MM_UnsuccIntraSgsnRauCC15_G,MM_UnsuccIntraSgsnRauCC15_U, MM_UnsuccIntraSgsnRauCC17_G,MM_UnsuccIntraSgsnRauCC17_U,MM_UnsuccIntraSgsnRAUCSPSCoord_U,MM_UnsuccISRAUCSPSCoord_U, MM_UnsuccServiceReq_U,nbrOfSubReady,nbrOfSubStandby,subscribersInTransitionalState,succAuthInSgsn,succCombiAttach, succGprsAttach,succGprsAttachUmts,succGprsAttachVisitor,succGprsDetachSgsn,succGprsDetachSgsnUmts,succImsiAttach, succInterSgsnRaUpdate,succInterSgsnRaUpdateUmts,succInterSgsnRaUpdateVisitor, succIntraSgsnRaUpdate,succIntraSgsnRaUpdateUmts,succPacketSwitchingPagingUmts,unsuccGprsAttachUmts,unsuccPacketSwitchingPaging,unsuccPacketSwitchingPagingUmts,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null from daybh_view1
+go
+if exists (select 1 from sysobjects where name="daybh_view1" and type="V")
+drop view daybh_view1
+go
+LOOP_ISQL1
+
+done < mapping_info
+}
+
+daybh_QOS_SM_NON() {
+
+if [ -f /${log_path}/daybh_QOS_SM_NON.log ] ; then
+        mv /${log_path}/daybh_QOS_SM_NON.log /${log_path}/daybh_QOS_SM_NON_bkp.log
+        touch /${log_path}/daybh_QOS_SM_NON.log
+fi
+
+echo "To migrate the data for DC_E_SGSN_QOS_SM_NON_DAYBH from DC_E_SGSN_SGSN_DAYBH"
+while IFS=, read tabname dateid
+do
+
+${SYBASE_IQ_PATH} -U${DC_USER} -P${DC_PASSWORD} -S${DWH_NAME_dwhdb} -w999999 << LOOP_ISQL1 -b > /${log_path}/daybh_QOS_SM_NON.log
+if exists (select 1 from sysobjects where name="daybh_view2" and type="V")
+drop view daybh_view2
+go
+create view daybh_view2 as select OSS_ID,SN,NEUN,NEDN,NESW,SGSN,Identifier,PERIOD_DURATION2,DATE_ID,YEAR_ID,MONTH_ID,DAY_ID,MIN_ID,BHTYPE,BUSYHOUR,BHCLASS,TIMELEVEL,SESSION_ID,BATCH_ID,PERIOD_DURATION,ROWSTATUS,DC_RELEASE,DC_SOURCE,DC_TIMEZONE,DC_SUSPECTFLAG,discardedSessionMgmnt,gprsSmSgsnDeactivations,gprsSmSgsnUnsuccessfulActivations,gprsSmSgsnUnsuccessfulModifications,QoS_AttActConversationalPdpContext_G, QoS_AttActConversationalPdpContext_U,QoS_AttActInteractivePdpContext_G,QoS_AttActInteractivePdpContext_U,QoS_AttActStreamingPdpContext_G,QoS_AttActStreamingPdpContext_U,QoS_BackgroundAttRabAss_U, QoS_BackgroundReSentRabAss_U,QoS_BackgroundSuccRabAss_U,QoS_ConversationalAttRabAss_U,QoS_ConversationalReSentRabAss_U,QoS_ConversationalSuccRabAss_U,QoS_CurrentGuaranteedBitRate_G, QoS_CurrentGuaranteedBitRate_U,QoS_DLBackgroundPktDiscarded_G,QoS_DLBackgroundPktDiscarded_U,QoS_DLBackgroundPktForwarded_G,QoS_DLBackgroundPktForwarded_U,QoS_DLConversationalPktDiscarded_G, QoS_DLConversationalPktDiscarded_U,QoS_DLConversationalPktForwarded_G,QoS_DLConversationalPktForwarded_U,QoS_DLInteractivePktDiscarded_G,QoS_DLInteractivePktDiscarded_U, QoS_DLInteractivePktForwarded_G,QoS_DLInteractivePktForwarded_U,QoS_DLStreamingPktDiscarded_G,QoS_DLStreamingPktDiscarded_U,QoS_DLStreamingPktForwarded_G,QoS_DLStreamingPktForwarded_U, QoS_GuaranteedBitRateAttempts_G,QoS_GuaranteedBitRateAttempts_U,QoS_GuaranteedBitRateDowngrades_G,QoS_GuaranteedBitRateDowngrades_U,QoS_InteractiveAttRabAss_U,QoS_InteractiveReSentRabAss_U, QoS_InteractiveSuccRabAss_U,QoS_NbrActConversationalPdpContext_G,QoS_NbrActConversationalPdpContext_U,QoS_NbrActInteractivePdpContext_G,QoS_NbrActInteractivePdpContext_U, QoS_NbrActStreamingPdpContext_G,QoS_NbrActStreamingPdpContext_U,QoS_StreamingAttRabAss_U,QoS_StreamingReSentRabAss_U,QoS_StreamingSuccRabAss_U,QoS_ULBackgroundPktForwarded, QoS_ULConversationalPktForwarded,QoS_ULInteractivePktForwarded,QoS_ULStreamingPktForwarded,SM_AttActPdpContext_G,SM_AttActPdpContext_U,SM_AttActPdpContextDyn_G,SM_AttActPdpContextDyn_U, SM_AttActPdpContextSgsnHome_G,SM_AttActPdpContextSgsnHome_U,SM_AttActSecondPdpContext_G,SM_AttActSecondPdpContext_U,SM_AttDeactPdpContextGgsn_G,SM_AttDeactPdpContextGgsn_U, SM_AttDeactPdpContextMs_G,SM_AttDeactPdpContextMs_U,SM_AttDeactPdpContextSgsn_G,SM_AttDeactPdpContextSgsn_U,SM_AttDeactPdpContextSgsnCC38_G,SM_AttDeactPdpContextSgsnCC38_U, SM_AttDeactPdpContextSgsnCC39_G,SM_AttDeactPdpContextSgsnCC39_U,SM_AttModPdpContextMs_G,SM_AttModPdpContextMs_U,SM_AttModPdpContextSgsn_G,SM_AttModPdpContextSgsn_U, SM_AttRabAssignment,SM_AttRabModPS,SM_AttUpdPdpContextGgsn_G,SM_AttUpdPdpContextGgsn_U,SM_AttUpdPdpContextSgsn_G,SM_AttUpdPdpContextSgsn_U,SM_DeactivatedPDPContextOldSgsn_G, SM_DeactivatedPDPContextOldSgsn_U,SM_NbrActivePDPsApprFor3GDT_U,SM_NbrActivePdpPerSgsn_G,SM_NbrActivePdpPerSgsn_U,SM_NbrActPdpContext_G,SM_NbrActPdpContext_U,SM_NbrActSessions, SM_NotDeactivatedPDPContextOldSgsn_G,SM_NotDeactivatedPDPContextOldSgsn_U,SM_PdpContextsLost_G,SM_PdpContextsLost_U,SM_SuccActPdpContext_G,SM_SuccActPdpContext_U, SM_SuccActPdpContextDyn_G,SM_SuccActPdpContextDyn_U,SM_SuccActPdpContextSgsnHome_G,SM_SuccActPdpContextSgsnHome_U,SM_SuccActSecondPdpContext_G,SM_SuccActSecondPdpContext_U, SM_SuccDeactPdpContextGgsn_G,SM_SuccDeactPdpContextGgsn_U,SM_SuccDeactPdpContextMs_G,SM_SuccDeactPdpContextMs_U,SM_SuccDeactPdpContextSgsn_G,SM_SuccDeactPdpContextSgsn_U, SM_SuccModPdpContextMs_G,SM_SuccModPdpContextMs_U,SM_SuccModPdpContextSgsn_G,SM_SuccModPdpContextSgsn_U,SM_SuccRabAssignment,SM_SuccUpdPdpContextGgsn_G, SM_SuccUpdPdpContextGgsn_U,SM_SuccUpdPdpContextSgsn_G,SM_SuccUpdPdpContextSgsn_U,SM_UnsuccActPdpContext_U,SM_UnsuccActPdpContextCamel_G,SM_UnsuccActPdpContextCamel_U, SM_UnsuccActPdpContextCC26_G,SM_UnsuccActPdpContextCC26_U,SM_UnsuccActPdpContextCC27_28_G,SM_UnsuccActPdpContextCC27_28_U,SM_UnsuccActPdpContextCC29_G, SM_UnsuccActPdpContextCC29_U,SM_UnsuccActPdpContextCC32_33_G,SM_UnsuccActPdpContextCC32_33_U,SM_UnsuccActPdpContextCC38_G,SM_UnsuccActPdpContextCC38_U, SM_UnsuccActPdpContextLicenseExceeded from DC_E_SGSN_SGSN_DAYBH where date_id="$dateid"
+go
+insert into $tabname select OSS_ID,SN,NEUN,NEDN,NESW,SGSN,Identifier,PERIOD_DURATION2,DATE_ID,YEAR_ID,MONTH_ID,DAY_ID,MIN_ID,BHTYPE,BUSYHOUR,BHCLASS,TIMELEVEL,SESSION_ID,BATCH_ID,PERIOD_DURATION,ROWSTATUS,DC_RELEASE,DC_SOURCE,DC_TIMEZONE,DC_SUSPECTFLAG,discardedSessionMgmnt,gprsSmSgsnDeactivations,gprsSmSgsnUnsuccessfulActivations,gprsSmSgsnUnsuccessfulModifications,QoS_AttActConversationalPdpContext_G, QoS_AttActConversationalPdpContext_U,QoS_AttActInteractivePdpContext_G,QoS_AttActInteractivePdpContext_U,QoS_AttActStreamingPdpContext_G,QoS_AttActStreamingPdpContext_U,QoS_BackgroundAttRabAss_U, QoS_BackgroundReSentRabAss_U,QoS_BackgroundSuccRabAss_U,QoS_ConversationalAttRabAss_U,QoS_ConversationalReSentRabAss_U,QoS_ConversationalSuccRabAss_U,QoS_CurrentGuaranteedBitRate_G, QoS_CurrentGuaranteedBitRate_U,QoS_DLBackgroundPktDiscarded_G,QoS_DLBackgroundPktDiscarded_U,QoS_DLBackgroundPktForwarded_G,QoS_DLBackgroundPktForwarded_U,QoS_DLConversationalPktDiscarded_G, QoS_DLConversationalPktDiscarded_U,QoS_DLConversationalPktForwarded_G,QoS_DLConversationalPktForwarded_U,QoS_DLInteractivePktDiscarded_G,QoS_DLInteractivePktDiscarded_U, QoS_DLInteractivePktForwarded_G,QoS_DLInteractivePktForwarded_U,QoS_DLStreamingPktDiscarded_G,QoS_DLStreamingPktDiscarded_U,QoS_DLStreamingPktForwarded_G,QoS_DLStreamingPktForwarded_U, QoS_GuaranteedBitRateAttempts_G,QoS_GuaranteedBitRateAttempts_U,QoS_GuaranteedBitRateDowngrades_G,QoS_GuaranteedBitRateDowngrades_U,QoS_InteractiveAttRabAss_U,QoS_InteractiveReSentRabAss_U, QoS_InteractiveSuccRabAss_U,QoS_NbrActConversationalPdpContext_G,QoS_NbrActConversationalPdpContext_U,QoS_NbrActInteractivePdpContext_G,QoS_NbrActInteractivePdpContext_U, QoS_NbrActStreamingPdpContext_G,QoS_NbrActStreamingPdpContext_U,QoS_StreamingAttRabAss_U,QoS_StreamingReSentRabAss_U,QoS_StreamingSuccRabAss_U,QoS_ULBackgroundPktForwarded, QoS_ULConversationalPktForwarded,QoS_ULInteractivePktForwarded,QoS_ULStreamingPktForwarded,SM_AttActPdpContext_G,SM_AttActPdpContext_U,SM_AttActPdpContextDyn_G,SM_AttActPdpContextDyn_U, SM_AttActPdpContextSgsnHome_G,SM_AttActPdpContextSgsnHome_U,SM_AttActSecondPdpContext_G,SM_AttActSecondPdpContext_U,SM_AttDeactPdpContextGgsn_G,SM_AttDeactPdpContextGgsn_U, SM_AttDeactPdpContextMs_G,SM_AttDeactPdpContextMs_U,SM_AttDeactPdpContextSgsn_G,SM_AttDeactPdpContextSgsn_U,SM_AttDeactPdpContextSgsnCC38_G,SM_AttDeactPdpContextSgsnCC38_U, SM_AttDeactPdpContextSgsnCC39_G,SM_AttDeactPdpContextSgsnCC39_U,SM_AttModPdpContextMs_G,SM_AttModPdpContextMs_U,SM_AttModPdpContextSgsn_G,SM_AttModPdpContextSgsn_U, SM_AttRabAssignment,SM_AttRabModPS,SM_AttUpdPdpContextGgsn_G,SM_AttUpdPdpContextGgsn_U,SM_AttUpdPdpContextSgsn_G,SM_AttUpdPdpContextSgsn_U,SM_DeactivatedPDPContextOldSgsn_G, SM_DeactivatedPDPContextOldSgsn_U,SM_NbrActivePDPsApprFor3GDT_U,SM_NbrActivePdpPerSgsn_G,SM_NbrActivePdpPerSgsn_U,SM_NbrActPdpContext_G,SM_NbrActPdpContext_U,SM_NbrActSessions, SM_NotDeactivatedPDPContextOldSgsn_G,SM_NotDeactivatedPDPContextOldSgsn_U,SM_PdpContextsLost_G,SM_PdpContextsLost_U,SM_SuccActPdpContext_G,SM_SuccActPdpContext_U, SM_SuccActPdpContextDyn_G,SM_SuccActPdpContextDyn_U,SM_SuccActPdpContextSgsnHome_G,SM_SuccActPdpContextSgsnHome_U,SM_SuccActSecondPdpContext_G,SM_SuccActSecondPdpContext_U, SM_SuccDeactPdpContextGgsn_G,SM_SuccDeactPdpContextGgsn_U,SM_SuccDeactPdpContextMs_G,SM_SuccDeactPdpContextMs_U,SM_SuccDeactPdpContextSgsn_G,SM_SuccDeactPdpContextSgsn_U, SM_SuccModPdpContextMs_G,SM_SuccModPdpContextMs_U,SM_SuccModPdpContextSgsn_G,SM_SuccModPdpContextSgsn_U,SM_SuccRabAssignment,SM_SuccUpdPdpContextGgsn_G, SM_SuccUpdPdpContextGgsn_U,SM_SuccUpdPdpContextSgsn_G,SM_SuccUpdPdpContextSgsn_U,SM_UnsuccActPdpContext_U,SM_UnsuccActPdpContextCamel_G,SM_UnsuccActPdpContextCamel_U, SM_UnsuccActPdpContextCC26_G,SM_UnsuccActPdpContextCC26_U,SM_UnsuccActPdpContextCC27_28_G,SM_UnsuccActPdpContextCC27_28_U,SM_UnsuccActPdpContextCC29_G, SM_UnsuccActPdpContextCC29_U,SM_UnsuccActPdpContextCC32_33_G,SM_UnsuccActPdpContextCC32_33_U,SM_UnsuccActPdpContextCC38_G,SM_UnsuccActPdpContextCC38_U, SM_UnsuccActPdpContextLicenseExceeded,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null from daybh_view2
+go
+if exists (select 1 from sysobjects where name="daybh_view2" and type="V")
+drop view daybh_view2
+go
+LOOP_ISQL1
+
+done < mapping_info
+}
+
+#---------------------------------------------------------------------------------------
+
+
+#Main Program starts here
+
+cprompt=$1
+if [ $# -ne 1 ]
+then
+        help_fn
+        exit
+fi
+case $cprompt in
+
+       	    day)   
+                        tab_name=DC_E_SGSN_SGSN_MM_NON:DAY 
+                        source=DC_E_SGSN_SGSN_DAY
+                        date_list
+                        delete_mapping
+                        insert_mapping
+	         	      day_MM_NON
+                        tab_name=DC_E_SGSN_QOS_SM_NON:DAY 
+                        date_list
+                        delete_mapping
+                        insert_mapping
+		            day_QOS_SM_NON
+	        	      ;;
+                raw)   
+                        tab_name=DC_E_SGSN_SGSN_MM_NON:RAW 
+                        source=DC_E_SGSN_SGSN_RAW
+                        date_list
+                        delete_mapping
+                        insert_mapping
+	         	      raw_MM_NON
+                        tab_name=DC_E_SGSN_QOS_SM_NON:RAW 
+                        date_list
+                        delete_mapping
+                        insert_mapping
+		            raw_QOS_SM_NON
+	        	      ;;
+                count)
+                        tab_name=DC_E_SGSN_SGSN_MM_NON:COUNT
+                        source=DC_E_SGSN_SGSN_COUNT
+                        date_list
+                        delete_mapping
+                        insert_mapping
+                        count_MM_NON
+                        tab_name=DC_E_SGSN_QOS_SM_NON:COUNT
+                        date_list
+                        delete_mapping
+                        insert_mapping
+                        count_QOS_SM_NON
+                        ;;
+                daybh)
+                        help_fn
+                        #tab_name=DC_E_SGSN_SGSN_MM_NON:DAYBH
+                        #source=DC_E_SGSN_SGSN_DAYBH
+                        #date_list
+                        #delete_mapping
+                        #insert_mapping
+                        #daybh_MM_NON
+                        #tab_name=DC_E_SGSN_QOS_SM_NON:DAYBH
+                        #date_list
+                        #delete_mapping
+                        #insert_mapping
+                        #daybh_QOS_SM_NON
+                        ;;
+                *)
+                        help_fn
+                        ;;
+esac

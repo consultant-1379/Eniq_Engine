@@ -1,0 +1,130 @@
+#!/bin/bash
+# ----------------------------------------------------------------------
+# Ericsson Network IQ ETLC engine control script
+#
+# Usage: engine start|stop|restart|status
+#
+# ----------------------------------------------------------------------
+# Copyright (c) 1999 - 2007 AB Ericsson Oy  All rights reserved.
+# ----------------------------------------------------------------------
+
+unalias stop 2> /dev/null
+
+if [ ${LOGNAME} != "dcuser"  ] ; then
+  echo "This script must be executed as dcuser"
+  exit 32
+fi
+
+if [ -z "$CONF_DIR" ] ; then
+  echo "ERROR: CONF_DIR is not set"
+  exit 1
+fi
+
+. ${CONF_DIR}/niq.rc
+
+JAVA_HOME="/eniq/sw/runtime/java"
+
+CPATH="${PLATFORM_DIR}"
+
+DIRS=`ls ${PLATFORM_DIR}`
+
+for file in ${DIRS}
+do
+  if [ -d ${PLATFORM_DIR}/${file}/dclib ]
+  then
+    JARS=`ls ${PLATFORM_DIR}/${file}/dclib/*.jar`
+
+    for jar in ${JARS}
+    do
+      CPATH="${CPATH}:${jar}"
+    done
+  fi
+done
+
+start() {
+
+  ${ADMIN_BIN}/eniq_service_start_stop.bsh -s engine -a start
+  if [ -f "/tmp/dwhdb_full" ]; then
+    rm /tmp/dwhdb_full
+  fi
+}
+
+stop() {
+
+  if [ -f "/tmp/dwhdb_full" ]; then    
+	thisdate=`date +%Y_%m_%d`
+  	message=`date "+%d.%m %H:%M:%S"`" 0 SEVERE engine.sh : DWHDB is full! Therefore Engine is killed and the service is put to maintenance mode."
+  	
+  	echo ${message} >> ${LOG_DIR}/engine/engine-${thisdate}.log
+  	echo ${message} >> ${LOG_DIR}/engine/error-${thisdate}.log
+    
+    rm /tmp/dwhdb_full
+    ps -ef | grep java | grep ETLCEngine | awk '{print $2}' | xargs kill -9
+  else
+    ${ADMIN_BIN}/eniq_service_start_stop.bsh -s engine -a stop
+  fi
+
+}
+
+# 0 implies sucessfull, 4 means engine is not initialized properly
+
+status() {
+
+  ${JAVA_HOME}/bin/java -Dpname="EngineAdmin" -Xmx64M -Djava.util.logging.config.file=${CONF_DIR}/engineAdminLogging.properties -Ddc5000.config.directory=${CONF_DIR} -Ddc.conf.dir=${CONF_DIR} -DLOG_DIR=${LOG_DIR} -classpath ${CPATH} com.distocraft.dc5000.etl.engine.main.EngineAdmin status
+
+  ECODE=$?
+
+  echo ""
+
+  if [ ${ECODE} -eq 0 ] ; then
+    echo "engine is running OK"
+   else
+	if [ ${ECODE} != 4 ];then
+   	 echo "engine is not running"
+	fi
+  fi
+  exit ${ECODE}
+}
+
+eexecute() {
+
+  ${JAVA_HOME}/bin/java -Dpname="EngineAdmin" -Xmx64M -Djava.util.logging.config.file=${CONF_DIR}/engineAdminLogging.properties -Ddc5000.config.directory=${CONF_DIR} -Ddc.conf.dir=${CONF_DIR} -DLOG_DIR=${LOG_DIR} -classpath ${CPATH} com.distocraft.dc5000.etl.engine.main.EngineAdmin ${X1} ${X2} ${X3} ${X4}
+
+  ECODE=$?
+
+  if [ ${ECODE} -ne 0 ] ; then
+    if [ "${X1}" != "" ] ; then
+    	echo "Execute failed"
+    fi
+  fi
+
+  exit ${ECODE}
+
+}
+
+case "$1" in
+start)
+      start
+      ;;
+stop)
+     stop
+     ;;
+restart)
+     stop
+     start
+     ;;
+status)
+     status
+     ;;
+-e)
+     X1=$2
+     X2=$3
+     X3=$4
+     X4=$5
+     eexecute
+     ;;
+*)
+     echo "Usage: engine start|stop|restart|status|-e COMMAND"
+     exit 10
+     ;;
+esac

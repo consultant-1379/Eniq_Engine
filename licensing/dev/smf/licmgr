@@ -1,0 +1,134 @@
+#!/bin/bash
+# ----------------------------------------------------------------------
+# Ericsson Network IQ ETLC licensingmanager control script
+#
+# Usage: licensemanager.bsh start|stop|restart|status|update
+#
+# ----------------------------------------------------------------------
+# Copyright (c) 1999 - 2007 AB Ericsson Oy  All rights reserved.
+# ----------------------------------------------------------------------
+
+# Some of the code has been shamelessly borrowed from the scheduler
+# start-up script.
+
+unalias stop 2> /dev/null
+
+SENTINEL_BIN=/eniq/sentinel/bin
+
+if [ -z "$CONF_DIR" ] ; then
+  echo "ERROR: CONF_DIR is not set"
+  exit 1
+fi
+
+. ${CONF_DIR}/niq.rc
+
+if [ ${LOGNAME} != "dcuser"  ] ; then
+  echo "This script must be executed as dcuser"
+  exit 32
+fi
+
+thisdate=`date +%Y_%m_%d`
+LOGFILE=${LOG_DIR}/licensemanager/licensemanager-${thisdate}.log
+
+TEE=/usr/bin/tee
+JAVA_HOME="/eniq/sw/runtime/java"
+CPATH="${PLATFORM_DIR}:/eniq/sentinel/Java/"
+DIRS=`ls ${PLATFORM_DIR}`
+
+for file in ${DIRS}
+do
+  if [ -d ${PLATFORM_DIR}/${file}/dclib ]
+  then
+    JARS=`ls ${PLATFORM_DIR}/${file}/dclib/*.jar`
+
+    for jar in ${JARS}
+    do
+      CPATH="${CPATH}:${jar}"
+    done
+  fi
+done
+
+function start {
+ ePID=`ps -ef | grep java | grep LicensingCache | awk '{print $2}'`
+ 
+  # Check if sentinel has a local configuration.
+  LOCAL_SENTINEL=""
+  LOCAL_SENTINEL=`cat /eniq/installation/config/sentinel.ini | egrep "Sentinel_Serv_Type=" | nawk -F\= '{print $2}'`
+ 
+  if [ "${LOCAL_SENTINEL}" == "LOCAL" ] ; then
+ 
+  # Check if sentinel is online. Poll max. 30 times, before starting the licmgr.
+          echo "Checking if sentinel is up before licmgr startup"  | ${TEE} -a ${LOGFILE}
+          SENTINEL_STATUS=""
+          SENTINEL_STATUS=`svcs -a | grep sentinel | awk '{print $1}'`
+          RETRY_COUNT=0
+          until [ "${SENTINEL_STATUS}" == "online" ]
+          do
+                if [ $RETRY_COUNT -gt 30 ]; then
+                                break
+                fi
+                sleep 10
+                SENTINEL_STATUS=`svcs -a | grep sentinel | awk '{print $1}'`
+                RETRY_COUNT=`expr $RETRY_COUNT + 1`
+                echo "Sentinel is not online on ${LSHOST}. Waiting for sentinel to go online before licmgr startup"  | ${TEE} -a ${LOGFILE}
+          done
+     if [ "${SENTINEL_STATUS}" == "online" ] ; then
+         echo "Sentinel is online on ${LSHOST}. Starting licmgr"  | ${TEE} -a ${LOGFILE}
+         if [ -z "${ePID}" ] ; then
+           ${JAVA_HOME}/bin/java -Dpname="LicensingCache" -Djava.util.logging.config.file=${CONF_DIR}/licensingLogging.properties -classpath ${CPATH} -Djava.rmi.server.codebase=file:${CPATH} -DLSHOST=${LSHOST} -DLOG_DIR=${LOG_DIR} -Ddc.conf.dir=${CONF_DIR} com.ericsson.eniq.licensing.cache.DefaultLicensingCache $1 2>&1 > /dev/null &
+           echo "License manager started and forked"  | ${TEE} -a ${LOGFILE}
+         fi
+    else
+         echo "Sentinel is not online on ${LSHOST} after retrying. License manager could not be started and forked."  | ${TEE} -a ${LOGFILE}
+    fi
+ else
+     echo "Sentinel is on a remote server ${LSHOST}. Starting licmgr"  | ${TEE} -a ${LOGFILE}
+        if [ -z "${ePID}" ] ; then
+          ${JAVA_HOME}/bin/java -Dpname="LicensingCache" -Djava.util.logging.config.file=${CONF_DIR}/licensingLogging.properties -classpath ${CPATH} -Djava.rmi.server.codebase=file:${CPATH} -DLSHOST=${LSHOST} -DLOG_DIR=${LOG_DIR} -Ddc.conf.dir=${CONF_DIR} com.ericsson.eniq.licensing.cache.DefaultLicensingCache $1 2>&1 > /dev/null &
+          echo "License manager started and forked"  | ${TEE} -a ${LOGFILE}
+        fi
+  fi
+  #Deliberate sleep of 30 seconds for letting the license manager cache all the licenses. Otherwise the engine will try to come online on completion of this method without the license manager having cached all the licenses.
+  sleep 30
+}
+
+function stop {
+  ${JAVA_HOME}/bin/java -classpath ${CPATH} -Djava.util.logging.config.file=${CONF_DIR}/licensingAdminLogging.properties -Djava.rmi.server.codebase=file:${CPATH} -DLOG_DIR=${LOG_DIR} -Ddc.conf.dir=${CONF_DIR} com.ericsson.eniq.licensing.cache.LicensingCacheAdmin stop
+
+  cnt=0
+  while [ ${cnt} -lt 10 ] ; do
+    sleep 1
+
+    ePID=`ps -ef | grep java | grep LicensingCache | awk '{print $2}'`
+
+    if [ -z "${ePID}" ] ; then
+      return 0
+    else
+      let cnt=cnt+1
+    fi
+
+  done
+
+  ePID=`ps -ef | grep java | grep LicensingCache | awk '{print $2}'`
+
+  if [ ! -z "${ePID}" ] ; then
+    kill -9 ${ePID}
+    echo "License manager killed." | ${TEE} -a ${LOGFILE}
+  else
+    echo "License manager died gracefully." | ${TEE} -a ${LOGFILE} 
+  fi
+
+}
+
+case "$1" in
+start)
+      start
+      ;;
+stop)
+     stop
+     ;;
+*)
+      echo "This script shall only be used by SMF!"
+      exit 10
+      ;;
+esac

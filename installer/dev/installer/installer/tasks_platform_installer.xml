@@ -1,0 +1,206 @@
+<!--
+     Ericsson Network IQ Platform Installer ant tasks.
+     Copyright (c) 1999 - 2006 AB LM Ericsson Oy  All rights reserved.
+-->
+
+<project name="Platform_installer" default="all">
+
+  <import file="${dc.installer.dir}/tmp/install/install.xml"/>
+
+  <taskdef resource="net/sf/antcontrib/antlib.xml"/>
+  <taskdef name="depcheck" classname="com.distocraft.dc5000.install.ant.DependencyCheck"/>
+  <taskdef name="forcedelete" classname="com.distocraft.dc5000.install.ant.ForceDeleteFile"/>
+  <taskdef name="GetDBProperties" classname="com.distocraft.dc5000.install.ant.GetDBProperties"/>
+  <taskdef name="INIGet" classname="com.distocraft.dc5000.install.ant.INIGet"/>
+  <taskdef name="MergeProperties" classname="com.distocraft.dc5000.install.ant.MergeProperties"/>
+  <taskdef name="UpdateProperties" classname="com.distocraft.dc5000.install.ant.UpdateProperties"/>	
+  <taskdef name="lstoproperty" classname="com.distocraft.dc5000.install.ant.LsToProperty"/>
+  <taskdef name="IntervalDSTModifier" classname="com.distocraft.dc5000.install.ant.IntervalDSTModifier"/>
+  <taskdef name="MergeWebXML" classname="com.distocraft.dc5000.install.ant.MergeWebXML"/>
+	
+  <property name="versiondb" value="${dc.installer.dir}/versiondb.properties"/>
+  <property name="obsoletedir" value="${dc.installer.dir}/obsolete"/>
+  
+    
+  <target name="all" depends="load_version_info,check_dependencies,run_inst,update_version_list"/>
+		
+  <!-- Load and print version information -->
+  <target name="load_version_info">
+    <property file="${dc.installer.dir}/tmp/install/version.properties"/>
+    <echo>Installation package information.</echo>
+    <echo>Module name: ${module.name}</echo>
+    <echo>Version: ${module.version}</echo>
+    <echo>Build: ${module.build}</echo>
+  </target>
+	
+  <!-- Check package dependencies defined on package to be installed -->
+  <target name="check_dependencies">
+    <property file="${versiondb}"/>
+    <depcheck forceflag="${forceflag}"/>
+    <echo>dependency check succeed</echo>
+  </target>
+	
+  <!-- Executes install/upgrade task defined on package to be installed -->
+  <target name="run_inst">
+    <if>
+      <equals arg1="${dc.installation.type}" arg2="update" casesensitive="false"/>
+      <then>
+        <antcall target="update"/>
+      </then>
+    </if>
+    <if>
+      <equals arg1="${dc.installation.type}" arg2="install" casesensitive="false"/>
+      <then>
+        <echo>Executing install target</echo>
+        <antcall target="install"/>
+      </then>
+    </if>
+    <if>
+      <equals arg1="${dc.installation.type}" arg2="force" casesensitive="false"/>
+      <then>
+        <echo>Executing update target</echo>
+        <antcall target="update"/>
+      </then>
+    </if>
+    <if>
+      <equals arg1="${migrateflag}" arg2="update"/>
+      <then>
+        <echo>Executing Migration Step 1 (updating/unloading existing tables on Sybase IQ)</echo>
+        <antcall target="migrate"/>
+      </then>
+    </if> 
+    <if>
+      <equals arg1="${migrateflag}" arg2="migrate"/>
+      <then>
+        <echo>Executing Migration Step 2 (creating/loading tables on SQL Anywhere)</echo>
+        <antcall target="migrate"/>
+      </then>
+    </if> 
+  </target>
+	
+  <!-- Updates revision history file -->
+  <target name="update_version_list">
+	<if>
+  	 	  <available file="${versiondb}"/>
+  	  	  <then>
+  	  	  	<UpdateProperties propertiesFile="${versiondb}" action="remove" key="module.AdminUI_BusyHour" />
+		  </then>
+  	</if>
+    <propertyfile file="${versiondb}">
+      <entry key="module.${module.name}" value="${module.version}b${module.build}"/>
+    </propertyfile>
+
+  </target>
+	
+  <!-- Common targets. These target can be used by scripts of installed packages. -->
+  <!-- This ant script itself does not use these targets. -->
+	
+  <target name="moveToObsolete">
+    <mkdir dir="${obsoletedir}"/>
+    <move todir="${obsoletedir}">
+      <fileset dir="${dc.platform.dir}">
+        <include name="${module.name}-*/**"/>
+      </fileset>
+    </move>
+  </target>
+	
+  <target name="copyTmpToDeploy">
+    <property name="dc.inst_dir" value="${dc.platform.dir}/${module.name}-${module.version}b${module.build}"/>
+    <mkdir dir="${dc.inst_dir}"/>
+    <copy toDir="${dc.inst_dir}">
+      <fileset dir="${dc.installer.dir}/tmp"/>
+    </copy>
+  </target>
+			
+  <target name="check_dir">
+    <if>
+      <available file="${dir}"/>
+      <then>
+        <echo>${dir} directory already exists</echo>
+      </then>
+      <else>
+        <mkdir dir="${dir}"/>
+        <chmod dir="${dir}" perm="u+rwx,g+rwx,o-rwx"/>
+      </else>
+    </if>
+  </target>
+	
+  <target name="check_link">
+    <trycatch property="msg1">
+      <try>	
+        <forcedelete file="${link}"/>
+      </try>
+      <catch>
+        <echo>remove ${link} failed: ${msg1}</echo>
+      </catch>
+    </trycatch>
+
+    <symlink link="${link}" resource="${resource}"/>
+  </target>
+
+  <!-- Executes one sql clause is specified database-->
+  <!-- Parameters: dbname=Name of database in etlrep.Metadatabases sqlfile=Name of sql file-->	
+  <target name="run_one_sql">
+    <property name="sqlfilesdir" value="${dc.installer.dir}/sqlfiles"/>
+    
+    <if>
+      <equals arg1="${module.name}" arg2="repository" /> <!-- If the module is repository -->
+      <then>
+      <if>
+         <equals arg1="${migrateflag}" arg2="update" />  <!-- if the migrate flag is set to update (update Sybase IQ REPDB) --> 
+         <then>
+           <property name="availableFile" value="${module.name}_${sqlfile}"/>
+         </then>
+         <else> <!-- if the migrate flag is not set to update (create Sybase Anywhere REPDB) -->
+           <property name="availableFile" value="ASA_${module.name}_${sqlfile}"/>
+         </else>
+      </if>   
+      </then>
+      <else>
+         <property name="availableFile" value="${module.name}_${sqlfile}"/>
+      </else>
+    </if>
+    <if>
+      <available file="${availableFile}" filepath="${sqlfilesdir}"/>
+      <then>
+        <echo>Sql ${sqlfile} already executed.</echo>
+      </then>
+      <else>
+        <GetDBProperties name="${dbname}" configurationDirectory="${dc.conf.dir}"/>
+
+        <propertycopy name="rs_drv" from="${dbname}DatabaseDriver"/>
+        <propertycopy name="rs_url" from="${dbname}DatabaseUrl"/>
+        <propertycopy name="rs_usr" from="${dbname}DatabaseUsername"/>
+        <propertycopy name="rs_pwd" from="${dbname}DatabasePassword"/>
+
+      	<if>
+      	  <isset property="statement"/>
+      	  <then>
+      	    <sql driver="${rs_drv}" url="${rs_url}" userid="${rs_usr}" password="${rs_pwd}">
+      	      <classpath>
+      	        <fileset dir="${dc.platform.dir}/">
+      	          <include name="**/dclib/*.jar"/>
+      	        </fileset>
+      	      </classpath>
+      	      <transaction>
+      	      	${statement}
+      	      </transaction>
+      	   </sql>
+      	  </then>
+      	  <else>
+            <sql driver="${rs_drv}" url="${rs_url}" userid="${rs_usr}" password="${rs_pwd}" src="${dc.installer.dir}/tmp/sql/${sqlfile}">
+              <classpath>
+                <fileset dir="${dc.platform.dir}/">
+                  <include name="**/dclib/*.jar"/>
+                </fileset>
+              </classpath>
+            </sql>
+
+            <copy file="${dc.installer.dir}/tmp/sql/${sqlfile}" toFile="${dc.installer.dir}/sqlfiles/${availableFile}"/>
+      	  </else>
+      	</if>
+      </else>
+    </if>
+  </target>
+
+</project>

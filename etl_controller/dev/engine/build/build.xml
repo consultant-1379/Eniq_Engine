@@ -1,0 +1,172 @@
+<project name="parser" default="compile">
+
+  <property name="pack.name" value="engine"/>
+  <property name="pack.version" value="5-0-0"/>
+
+  <!-- Attention! pack.dir have to be under tmp-dir because the actual build is done there --> 
+  <property name="pack.dir" value="/vobs/eniq/design/plat/etl_controller/dev/engine"/>
+
+  <!-- ENIQ Jars -->
+  <property name="eniq.alarm.dir" value="/vobs/eniq/design/plat/alarm_module/build/alarm_module"/>
+  <property name="eniq.asn1.dir" value="/vobs/eniq/design/plat/adapters/build/asn1"/>
+  <property name="eniq.common.dir" value="/vobs/eniq/design/plat/common_utilities/build/common_utilities"/>
+  <property name="eniq.diskmanager.dir" value="/vobs/eniq/design/plat/management/build/disk_manager"/>
+  <property name="eniq.dwhmanager.dir" value="/vobs/eniq/design/plat/management/build/dwh_manager"/>
+  <property name="eniq.ebsmanager.dir" value="/vobs/eniq/design/plat/management/build/ebsmanager"/>
+  <property name="eniq.export.dir" value="/vobs/eniq/design/plat/mediation/build/export"/>
+  <property name="eniq.licensing.dir" value="/vobs/eniq/design/plat/licensing/build/licensing"/>
+  <property name="eniq.mdc.dir" value="/vobs/eniq/design/plat/adapters/build/mdc"/>
+  <property name="eniq.mediation.dir" value="/vobs/eniq/design/plat/mediation/build/mediation"/>
+  <property name="eniq.monitoring.dir" value="/vobs/eniq/design/plat/monitoring_aggregation/build/monitoring"/>
+  <property name="eniq.parser.dir" value="/vobs/eniq/design/plat/adapters/build/parser"/>
+  <property name="eniq.repository.dir" value="/vobs/eniq/design/plat/installer/build/repository"/>
+  <property name="eniq.scheduler.dir" value="/vobs/eniq/design/plat/etl_controller/build/scheduler"/>
+  <property name="eniq.uncompress.dir" value="/vobs/eniq/design/plat/mediation/build/uncompress"/>
+
+
+  <!-- 3PP Jars -->
+  <property name="3pp.sybase.dir" value="/vobs/eniq/3pp/sybase/sybase_iq/v12_7/client/prod"/> <!-- jconn3.jar -->
+  <property name="3pp.log4j.dir" value="/vobs/eniq/3pp/apache/log4j/v1_2_11/prod"/>
+  <property name="3pp.velocity.dir" value="/vobs/eniq/3pp/apache/jakarta_velocity/v1_4/prod"/>
+  <property name="3pp.xerces_impl.dir" value="/vobs/eniq/3pp/apache/xerces_impl/v2_0_2/prod"/>
+<!--  <property name="3pp.xerces.dir" value="/vobs/eniq/3pp/apache/xerces_parser/v2_6_2/prod"/> -->
+  <property name="3pp.junit.dir" value="/vobs/eniq/3pp/junit/v4_5/prod"/>
+
+  <target name="precompile"/>
+  
+  <target name="compile">
+    <mkdir dir="${pack.dir}/classes"/>
+    <javac srcdir="${pack.dir}/src" destdir="${pack.dir}/classes"
+           failonerror="true" 
+           deprecation="off">
+      <classpath>
+        <pathelement path="${classpath}"/>
+		 <fileset dir="${eniq.alarm.dir}">
+				<include name="**/*.jar"/>
+		 </fileset>
+		 <fileset dir="${eniq.asn1.dir}">
+				<include name="**/*.jar"/>
+		 </fileset>
+		 <fileset dir="${eniq.common.dir}">
+				<include name="**/*.jar"/>
+		 </fileset>
+		 <fileset dir="${eniq.diskmanager.dir}">
+				<include name="**/*.jar"/>
+		 </fileset>
+		 <fileset dir="${eniq.dwhmanager.dir}">
+				<include name="**/*.jar"/>
+		 </fileset>
+		 <fileset dir="${eniq.ebsmanager.dir}">
+				<include name="**/*.jar"/>
+		 </fileset>
+		 <fileset dir="${eniq.export.dir}">
+				<include name="**/*.jar"/>
+		 </fileset>
+		 <fileset dir="${eniq.licensing.dir}">
+				<include name="**/*.jar"/>
+		 </fileset>
+		 <fileset dir="${eniq.mdc.dir}">
+				<include name="**/*.jar"/>
+		 </fileset>
+		 <fileset dir="${eniq.mediation.dir}">
+				<include name="**/*.jar"/>
+		 </fileset>
+		 <fileset dir="${eniq.monitoring.dir}">
+				<include name="**/*.jar"/>
+		 </fileset>
+		 <fileset dir="${eniq.parser.dir}">
+				<include name="**/*.jar"/>
+		 </fileset>
+		 <fileset dir="${eniq.repository.dir}">
+				<include name="**/*.jar"/>
+		 </fileset>
+		 <fileset dir="${eniq.scheduler.dir}">
+				<include name="**/*.jar"/>
+		 </fileset>
+		 <fileset dir="${eniq.uncompress.dir}">
+				<include name="**/*.jar"/>
+		 </fileset>
+		 <fileset dir="${3pp.sybase.dir}">
+				<include name="**/*.jar"/>
+		 </fileset>
+		 <fileset dir="${3pp.log4j.dir}">
+				<include name="**/*.jar"/>
+		 </fileset>
+		 <fileset dir="${3pp.velocity.dir}">
+				<include name="**/*.jar"/>
+		 </fileset>
+		 <fileset dir="${3pp.xerces_impl.dir}">
+				<include name="**/*.jar"/>
+		 </fileset>
+		 <fileset dir="${3pp.junit.dir}">
+                                <include name="**/*.jar"/>
+                 </fileset>
+      </classpath>
+    </javac>
+
+  <rmic classname="com.distocraft.dc5000.etl.engine.main.TransferEngine" base="${pack.dir}/classes">
+    <classpath>
+        <pathelement path="${classpath}"/>
+		 <fileset dir="${eniq.alarm.dir}">
+				<include name="**/*.jar"/>
+		 </fileset>
+		 <fileset dir="${eniq.asn1.dir}">
+				<include name="**/*.jar"/>
+		 </fileset>
+		 <fileset dir="${eniq.common.dir}">
+				<include name="**/*.jar"/>
+		 </fileset>
+		 <fileset dir="${eniq.diskmanager.dir}">
+				<include name="**/*.jar"/>
+		 </fileset>
+		 <fileset dir="${eniq.dwhmanager.dir}">
+				<include name="**/*.jar"/>
+		 </fileset>
+		 <fileset dir="${eniq.ebsmanager.dir}">
+				<include name="**/*.jar"/>
+		 </fileset>
+		 <fileset dir="${eniq.export.dir}">
+				<include name="**/*.jar"/>
+		 </fileset>
+		 <fileset dir="${eniq.licensing.dir}">
+				<include name="**/*.jar"/>
+		 </fileset>
+		 <fileset dir="${eniq.mdc.dir}">
+				<include name="**/*.jar"/>
+		 </fileset>
+		 <fileset dir="${eniq.mediation.dir}">
+				<include name="**/*.jar"/>
+		 </fileset>
+		 <fileset dir="${eniq.monitoring.dir}">
+				<include name="**/*.jar"/>
+		 </fileset>
+		 <fileset dir="${eniq.parser.dir}">
+				<include name="**/*.jar"/>
+		 </fileset>
+		 <fileset dir="${eniq.repository.dir}">
+				<include name="**/*.jar"/>
+		 </fileset>
+		 <fileset dir="${eniq.scheduler.dir}">
+				<include name="**/*.jar"/>
+		 </fileset>
+		 <fileset dir="${eniq.uncompress.dir}">
+				<include name="**/*.jar"/>
+		 </fileset>
+		 <fileset dir="${3pp.sybase.dir}">
+				<include name="**/*.jar"/>
+		 </fileset>
+		 <fileset dir="${3pp.log4j.dir}">
+				<include name="**/*.jar"/>
+		 </fileset>
+		 <fileset dir="${3pp.velocity.dir}">
+				<include name="**/*.jar"/>
+		 </fileset>
+		 <fileset dir="${3pp.xerces_impl.dir}">
+				<include name="**/*.jar"/>
+		 </fileset>
+    </classpath>
+  </rmic>
+  </target>
+  <target name="postcompile"/>
+
+</project>

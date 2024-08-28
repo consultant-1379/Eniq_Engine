@@ -1,0 +1,47 @@
+<project name="install" basedir="." default="all">
+
+
+
+	<target name="install" depends="copyTmpToDeploy">
+		<if>
+			<available file="${dc.conf.dir}/static.properties" />
+			<then />
+			<else>
+				<copy file="${dc.installer.dir}/tmp/conf/static.properties" toFile="${dc.conf.dir}/static.properties" />
+			</else>
+		</if>
+		
+				
+		<if>
+			<available file="${dc.runtime.dir}/tomcat/webapps/adminui/WEB-INF/lib" />
+			<then>
+				<delete>
+					<fileset dir="${dc.runtime.dir}/tomcat/webapps/adminui/WEB-INF/lib" includes="common.jar,techpackide.jar" />
+				</delete>
+				<copy todir="${dc.runtime.dir}/tomcat/webapps/adminui/WEB-INF/lib" flatten="true">
+					<fileset dir="${dc.platform.dir}">
+						<include name="**/dclib/common.jar" />
+						<include name="**/dclib/techpackide.jar" />
+					</fileset>
+				</copy>
+			</then>
+			<else />
+		</if>
+		
+		<if>
+			<available file="${dc.runtime.dir}/tomcat/webapps/techpackide/lib/common.jar" />
+			<then>
+				<delete file="${dc.runtime.dir}/tomcat/webapps/techpackide/lib/common.jar" />
+				<copy todir="${dc.runtime.dir}/tomcat/webapps/techpackide/lib" flatten="true">
+					<fileset dir="${dc.platform.dir}">
+						<include name="**/dclib/common.jar" />
+					</fileset>
+				</copy>
+			</then>
+			<else />
+		</if>
+	</target>
+
+	<target name="update" depends="moveToObsolete,install" />
+
+</project>

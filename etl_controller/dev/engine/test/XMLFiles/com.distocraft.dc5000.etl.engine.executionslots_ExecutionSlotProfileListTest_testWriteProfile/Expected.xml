@@ -1,0 +1,5 @@
+<?xml version="1.0"?>
+<dataset>
+	<Meta_execution_slot_profile PROFILE_NAME="Pname1" PROFILE_ID="PID1" ACTIVE_FLAG="N" />
+	<Meta_execution_slot_profile PROFILE_NAME="Pname2" PROFILE_ID="PID2" ACTIVE_FLAG="Y" />
+</dataset>

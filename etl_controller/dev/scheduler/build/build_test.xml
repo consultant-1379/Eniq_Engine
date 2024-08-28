@@ -1,0 +1,22 @@
+<project name="scheduler" default="test_all">
+    <property name="module.name" value="scheduler"/>
+    <property file="${user.home}/EniqBuild/BH/build.properties"/>
+    <property name="ant.common" value="${cc.base}/tools/ant_common"/>
+    <property file="${ant.common}/common.properties"/>
+    <property name="module.base" value="${module.scheduler.base}"/>
+    <property name="module.build" value="${module.scheduler.build}"/>
+    <property name="module.dependants" value="${module.scheduler.dependants}"/>
+    <import file="${ant.common}/common.xml"/>
+    <property name="tests.to.run" value="**/*Test.class"/>
+    <property name="tests.to.exclude" value="**/com/distocraft/dc5000/etl/scheduler/SchedulerAdminTest.class, **/com/distocraft/dc5000/etl/scheduler/SchedulerThreadTest.class, **/com/distocraft/dc5000/etl/scheduler/SchedulerUNIXTest.class"/>
+
+	 <path id="scheduler.lib.classpath">
+     	<path refid="plaform.lib.classpath"/>
+		<path location="${module.engine.pkg}"/>	 	  
+		<path location="${module.repository.pkg}"/>		
+	 </path>
+	 <path id="scheduler.test.classpath">
+		 <path refid="platform.test.classpath"/>
+		 <path refid="scheduler.lib.classpath"/>
+	 </path>
+</project>

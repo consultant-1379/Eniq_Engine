@@ -1,0 +1,770 @@
+#!/bin/sh
+# ----------------------------------------------------------------------
+# Ericsson Network IQ Tech pack installer script
+#
+# Usage: tp_installer 
+#
+# Author: Janne Berggren
+#
+# ----------------------------------------------------------------------
+# Copyright (c) 1999 - 2007 AB LM Ericsson Oy  All rights reserved.
+# ----------------------------------------------------------------------
+
+### Function: usage_msg ###
+#
+#   Print out the usage message
+#
+# Arguments:
+#	none
+# Return Values:
+#	none
+usage_msg() 
+{
+  echo ""
+  echo "Usage: `basename $0` -p <path_to_tech_packs> -f <tech_pack_list_file> | -t <tech_pack_name> | -c <feature_name_list_file> [-n] [-s] [-d]"
+  echo "options:"
+  echo "-f  : Path to a file containing list of tech packs to be installed."
+  echo "-p  : Path to the directory containing tech pack installation files." 
+  echo "-t  : Name of the tech pack to install."
+  echo "-n  : Skip required tech pack's checking during tech pack installation."
+  echo "-s  : Create snapshots before installing any tech packs."
+  echo "-d  : Skip R-state check during installation."
+  echo "-c  : Path to a file containing list of feature names to be installed."
+}
+
+if [ -z "${CONF_DIR}" ] ; then
+  echo "Environment variable CONF_DIR is not set or empty. Tech pack installation aborted."
+  exit 21
+fi
+
+if [ ! -r "${CONF_DIR}/niq.rc" ] ; then
+  echo "ERROR: Source file is not readable at ${CONF_DIR}/niq.rc"
+  exit 22
+fi
+
+. ${CONF_DIR}/niq.rc
+
+if [ -z "$INSTALLER_DIR" ] ; then
+    echo "Environment variable INSTALLER_DIR is not set or empty. Tech pack installation aborted." | tee -a ${TP_INSTALLER_LOGFILE}
+    exit 24
+fi
+
+if [ ! -r "${INSTALLER_DIR}/snapshot_functions.bsh" ] ; then
+  echo "ERROR: Snapshot functions file is not readable at ${INSTALLER_DIR}/snapshot_functions.bsh"
+  exit 49
+fi
+
+# Include the snapshot functions.
+. ${INSTALLER_DIR}/snapshot_functions.bsh
+
+TIMESTAMP=`date +%Y.%m.%d_%H:%M:%S`
+
+if [ -z "$CONF_DIR" ] ; then
+    echo "Environment variable CONF_DIR is not set or empty. Tech pack installation aborted."
+    exit 48
+fi
+
+if [ ! -d ${LOG_DIR}/tp_installer ] ; then
+  mkdir -p ${LOG_DIR}/tp_installer
+fi
+
+MAIN_LOGFILE=${LOG_DIR}/tp_installer/${TIMESTAMP}_tp_installer.log
+
+touch ${MAIN_LOGFILE}
+
+if [ -z "$PLATFORM_DIR" ] ; then
+    echo "Environment variable PLATFORM_DIR is not set or empty. Tech pack installation aborted." | tee -a ${MAIN_LOGFILE}
+    exit 23
+fi
+
+if [ -z "$RT_DIR" ] ; then
+    echo "Environment variable RT_DIR is not set or empty. Tech pack installation aborted." | tee -a ${MAIN_LOGFILE}
+    exit 25
+fi
+
+if [ -z "$ADMIN_BIN" ] ; then
+    echo "Environment variable ADMIN_BIN is not set or empty. Tech pack installation aborted." | tee -a ${MAIN_LOGFILE}
+    exit 26
+fi
+
+if [ -z "$DATA_DIR" ] ; then
+    echo "Environment variable DATA_DIR is not set or empty. Tech pack installation aborted." | tee -a ${MAIN_LOGFILE}
+    exit 47
+fi
+
+
+CPATH="${INSTALLER_DIR}/lib/installer.jar"
+INSTALLER_JARPATH="${CPATH}"
+
+if [ ! -r "${CPATH}" ] ; then
+  echo "ERROR: Jar file "installer.jar" is not readable at ${CPATH}" | tee -a ${MAIN_LOGFILE}
+  exit 27
+fi
+
+DIRS=`ls ${PLATFORM_DIR}`
+
+for file in $DIRS
+do
+  if [ -d ${PLATFORM_DIR}/$file/dclib ] ; then
+    JARS=`ls ${PLATFORM_DIR}/$file/dclib/*.jar`
+
+    for jar in $JARS
+    do
+      CPATH="${CPATH}:${jar}"
+    done
+  fi
+done
+
+# Check if the PLATFORM_DIR was correct and at least some jar-files are added to classpath.
+if [ ${INSTALLER_JARPATH} = ${CPATH} ] ; then
+	echo "Cannot find any jar-files within directories in ${PLATFORM_DIR}. Tech pack installation aborted." | tee -a ${MAIN_LOGFILE}
+	exit 28
+fi
+
+CURRENT_WORKING_DIRECTORY=`pwd`
+
+while getopts ":f:p:t:c:nsd" Option
+do
+  case $Option in
+    f) TP_LIST_FILE="$OPTARG" 
+       ;;
+    p) TP_DIR_PATH="$OPTARG" 
+       ;;
+    t) TP_NAME="$OPTARG" 
+       ;;
+    c) FEATURE_LIST_FILE="$OPTARG"
+       ;;
+    n) CHECK_FOR_REQUIRED_TECH_PACKS=false
+       ;;
+    s) CREATE_SNAPSHOTS=true
+       ;;
+    d) FORCE_INSTALL=true
+       ;;
+   \?) usage_msg
+       exit 29 
+       ;;
+  esac
+done
+
+# Must have tech pack directory path given as parameter.
+if [ -z "${TP_DIR_PATH}" ]; then
+    usage_msg
+    exit 30 
+fi
+
+# Check that not both the optional parameters are given as parameter.
+if [ ! -z "${TP_LIST_FILE}" -a ! -z "${TP_NAME}" ]; then
+    usage_msg
+    exit 33 
+fi
+
+# Must have either list of tech packs or one tech pack name to install.
+if [ ! -z "${TP_LIST_FILE}" ] ; then
+  if [ ! -f "${TP_LIST_FILE}" ] ; then
+    echo "Can't read ${TP_LIST_FILE}" | tee -a ${MAIN_LOGFILE}
+    exit 31
+  fi
+elif [ ! -z "${FEATURE_LIST_FILE}" ]; then
+  if [ ! -f "${FEATURE_LIST_FILE}" ] ; then
+    echo "Can't read ${FEATURE_LIST_FILE}" | tee -a ${MAIN_LOGFILE}
+    exit 45
+  fi
+elif [ -z "${TP_NAME}" ]; then
+    usage_msg
+    exit 32 
+fi
+
+#Check if the eniq_core_inst_stage file exists. If it does not exists upgrade cannot be carried as initial installation of eniq has not happened
+
+if [ -f /eniq/installation/core_install/etc/eniq_core_inst_stage ]; then
+ 	echo "Eniq Core Status file found" | tee -a ${MAIN_LOGFILE} 
+else
+	echo "Eniq Core Status file not found. Exiting upgrade" | tee -a ${MAIN_LOGFILE}
+	exit 40
+fi
+
+#Check that no other tp_installer process is running. Simultaneous execution of tp_installer will cause trouble.
+LOCK_FILE=${CURRENT_WORKING_DIRECTORY}/install_lockfile
+if [ -f $LOCK_FILE ]; then
+  echo "Another instance of tp_installer or activate_interface or deactivate_interface script is running. Please wait for it to finish first and then try again. If no other instance of tp_installer script  or activate_interface or deactivate_interface is running please check the log of the last installed tp/interface or the last activated/deactivated interface in the /eniq/log/sw_log/tp_installer dir, remove the file $LOCK_FILE and try again." | tee -a ${MAIN_LOGFILE}
+  exit 40
+fi
+touch ${LOCK_FILE}
+
+if [ ! -z "${FEATURE_LIST_FILE}" ] ; then
+  FEATURE_LIST=`cat ${FEATURE_LIST_FILE}`
+  FEATURES=""
+  for feature in `cat ${FEATURE_LIST_FILE}`
+  do
+    FEATURES="${FEATURES} ${feature}"
+  done
+  echo "Parsing list of features..."
+  INTERFACES_LIST=`${BIN_DIR}/licmgr -map interface ${FEATURES}`
+  echo "List of features parsed successfully."
+  TP_NAME="${INTERFACES_LIST}"
+fi
+
+
+if [ ! -z "${TP_NAME}" ] ; then
+  echo "${TP_NAME}" > /tmp/tplist
+  TP_LIST_FILE=/tmp/tplist
+fi
+
+echo "Starting to install tech packs." | tee -a ${MAIN_LOGFILE}
+
+###Start- set the query plan option to 0. Needed for reducing the upgrade time.
+echo "Setting the max_plans_cached option to 0"
+SYBASE_IQ_ISQL_PATH=/eniq/sybase_iq/IQ-15_2/bin64/iqisql
+${SYBASE_IQ_ISQL_PATH} -Udba -Psql -Sdwhdb <<EOISQLA
+set option public.max_plans_cached=0
+go
+quit
+EOISQLA
+
+echo "Changed the max_plans_cached option to 0"
+### End of db setting
+
+echo "List of tech packs to install:" | tee -a ${MAIN_LOGFILE}
+TECH_PACKS_TO_INSTALL=`cat ${TP_LIST_FILE}`
+echo "${TECH_PACKS_TO_INSTALL}" | tee -a ${MAIN_LOGFILE}
+
+if [ -z "${CHECK_FOR_REQUIRED_TECH_PACKS}" ]; then
+    CHECK_FOR_REQUIRED_TECH_PACKS=true
+fi
+
+if [ -z "${CREATE_SNAPSHOTS}" ]; then
+    CREATE_SNAPSHOTS=false
+fi
+
+if [ ! -x "${RT_DIR}/ant/bin/ant" ] ; then
+	echo "ANT was not found in ${RT_DIR}/ant/bin/ant. Tech pack installation aborted." | tee -a ${MAIN_LOGFILE}
+	exit 34
+	#Remove the locking file
+    rm ${LOCK_FILE}
+fi
+
+if [ ! -d "${TP_DIR_PATH}" ] ; then
+	echo "Cannot find the tech pack directory. Tech pack installation aborted." | tee -a ${MAIN_LOGFILE}
+	#Remove the locking file
+    rm ${LOCK_FILE}
+	exit 35
+fi
+
+if [ ! -d ${LOG_DIR}/tp_installer ]; then
+  mkdir ${LOG_DIR}/tp_installer
+fi
+
+JAVA_HOME=${RT_DIR}/java
+export JAVA_HOME
+
+${RT_DIR}/ant/bin/ant -f tasks_install_utils.xml -lib ${CPATH} -Ddc.installer.dir=${INSTALLER_DIR} -DcheckForRequiredTechPacks=${CHECK_FOR_REQUIRED_TECH_PACKS} -Dlistfile=${TP_LIST_FILE} -Dtpdir=${TP_DIR_PATH} orderer > /tmp/orderresult 2>&1
+
+cat /tmp/orderresult
+
+if [ -f /tmp/orderresult ] ; then
+  SUC=`cat /tmp/orderresult | grep "BUILD SUCCESSFUL"`
+  if [ -z "${SUC}" ] ; then
+    echo "Error in install orderer. Installation failed." | tee -a ${MAIN_LOGFILE}
+    #Remove the locking file
+    rm ${LOCK_FILE}
+    exit 36
+  fi
+fi
+
+echo "Order of tech packs to be installed:" | tee -a ${MAIN_LOGFILE}
+TP_INSTALL_ORDER=`cat ${TP_LIST_FILE}`
+echo "${TP_INSTALL_ORDER}" | tee -a ${MAIN_LOGFILE}
+
+if [ "${CREATE_SNAPSHOTS}" = "true" ]; then
+  # Create the snapshots.
+  create_snapshots
+  
+  echo "All required snapshots created" | tee -a ${MAIN_LOGFILE}
+fi
+
+echo "Changing engine profile to NoLoads" | tee -a ${MAIN_LOGFILE}
+
+${BIN_DIR}/engine -e changeProfile NoLoads
+  
+NOLOADS_EXIT_STATUS=$?
+
+if [ ${NOLOADS_EXIT_STATUS} -ne 0 ] ; then
+  echo "Engine status NoLoads could not be changed. Aborting techpack installation." | tee -a ${MAIN_LOGFILE}
+  #Remove the locking file
+  rm ${LOCK_FILE}
+  exit 43
+  else
+  echo "Engine status changed to NoLoads" | tee -a ${MAIN_LOGFILE}
+fi
+  
+echo "Engine profile NoLoads changed successfully at "`date +%Y.%m.%d_%H:%M:%S` | tee -a ${MAIN_LOGFILE}
+
+INSTALLATION_CHECK1=""
+INSTALLATION_CHECK1=`cat /eniq/installation/core_install/etc/eniq_core_inst_stage | egrep "done|cleanup" | sed -e 's| ||g'`
+ENIQ_UPGRADE_IN_PROGRESS="false"
+ 
+if [ "${INSTALLATION_CHECK1}" != "" ] ; then
+    ENIQ_UPGRADE_IN_PROGRESS="true"
+fi
+
+if [ "${ENIQ_UPGRADE_IN_PROGRESS}" = "false" ] ; then
+  echo "Initial installation in progress. Not restarting engine." | tee -a ${MAIN_LOGFILE}
+else
+
+  # --------------------------------------------------------------------------------------  
+  # Disable all DWH_MONITOR Support Sets before Upgrade.
+  # --------------------------------------------------------------------------------------  
+    
+  # Disable the schedule UpdateMonitoring for DWH_MONITOR
+  # --------------------------------------------------------------------------------------  
+  UPDATE_MONITORING_STATUS=`scheduler -e disable_schedule DWH_MONITOR UpdateMonitoring`
+  until [ "${UPDATE_MONITORING_STATUS}" = "Schedule UpdateMonitoring disabled successfully. Please reload scheduler for the changes to take effect." -o "${UPDATE_MONITORING_STATUS}" = "Schedule UpdateMonitoring is already disabled." ]
+    do
+  	sleep 10
+  	UPDATE_MONITORING_STATUS=`scheduler -e disable_schedule DWH_MONITOR UpdateMonitoring`
+  	echo "Disabling UpdateMonitoring"  	
+    done
+  echo "Disabled UpdateMonitoring successfully at "`date +%Y.%m.%d_%H:%M:%S` | tee -a ${MAIN_LOGFILE}
+
+  # Disable the schedule UpdateMonitoringOnStartup for DWH_MONITOR
+  # --------------------------------------------------------------------------------------  
+  UPDATE_MONITORING_ONSTARTUP_STATUS=`scheduler -e disable_schedule DWH_MONITOR UpdateMonitoringOnStartup`
+  until [ "${UPDATE_MONITORING_ONSTARTUP_STATUS}" = "Schedule UpdateMonitoringOnStartup disabled successfully. Please reload scheduler for the changes to take effect." -o "${UPDATE_MONITORING_ONSTARTUP_STATUS}" = "Schedule UpdateMonitoringOnStartup is already disabled." ]
+    do
+  	sleep 10
+  	UPDATE_MONITORING_ONSTARTUP_STATUS=`scheduler -e disable_schedule DWH_MONITOR UpdateMonitoringOnStartup`
+  	echo "Disabling UpdateMonitoringOnStartup"  	
+    done
+  echo "Disabled UpdateMonitoringOnStartup successfully at "`date +%Y.%m.%d_%H:%M:%S` | tee -a ${MAIN_LOGFILE}
+
+  # Disable the schedule SessionLoader_Starter for DWH_MONITOR
+  # --------------------------------------------------------------------------------------  
+  SESSIONLOADER_STARTER_STATUS=`scheduler -e disable_schedule DWH_MONITOR SessionLoader_Starter`
+  until [ "${SESSIONLOADER_STARTER_STATUS}" = "Schedule SessionLoader_Starter disabled successfully. Please reload scheduler for the changes to take effect." -o "${SESSIONLOADER_STARTER_STATUS}" = "Schedule SessionLoader_Starter is already disabled." ]
+    do
+  	sleep 10
+  	SESSIONLOADER_STARTER_STATUS=`scheduler -e disable_schedule DWH_MONITOR SessionLoader_Starter`
+  	echo "Disabling SessionLoader_Starter"  	
+    done
+  echo "Disabled SessionLoader_Starter successfully at "`date +%Y.%m.%d_%H:%M:%S` | tee -a ${MAIN_LOGFILE}
+
+  # Disable the schedule SessionLogLoader_Loader for DWH_MONITOR
+  # --------------------------------------------------------------------------------------  
+  SESSIONLOGLOADER_LOADER_STATUS=`scheduler -e disable_schedule DWH_MONITOR SessionLogLoader_Loader`
+  until [ "${SESSIONLOGLOADER_LOADER_STATUS}" = "Schedule SessionLogLoader_Loader disabled successfully. Please reload scheduler for the changes to take effect." -o "${SESSIONLOGLOADER_LOADER_STATUS}" = "Schedule SessionLogLoader_Loader is already disabled." ]
+    do
+  	sleep 10
+  	SESSIONLOGLOADER_LOADER_STATUS=`scheduler -e disable_schedule DWH_MONITOR SessionLogLoader_Loader`
+  	echo "Disabling SessionLogLoader_Loader"  	
+    done
+  echo "Disabled SessionLogLoader_Loader successfully at "`date +%Y.%m.%d_%H:%M:%S` | tee -a ${MAIN_LOGFILE}
+
+  # Disable the schedule SessionLogLoader_Aggregator for DWH_MONITOR
+  # --------------------------------------------------------------------------------------  
+  SESSIONLOGLOADER_AGGREGATOR_STATUS=`scheduler -e disable_schedule DWH_MONITOR SessionLogLoader_Aggregator`
+  until [ "${SESSIONLOGLOADER_AGGREGATOR_STATUS}" = "Schedule SessionLogLoader_Aggregator disabled successfully. Please reload scheduler for the changes to take effect." -o "${SESSIONLOGLOADER_AGGREGATOR_STATUS}" = "Schedule SessionLogLoader_Aggregator is already disabled." ]
+    do
+  	sleep 10
+  	SESSIONLOGLOADER_AGGREGATOR_STATUS=`scheduler -e disable_schedule DWH_MONITOR SessionLogLoader_Aggregator`
+  	echo "Disabling SessionLogLoader_Aggregator"  	
+    done
+  echo "Disabled SessionLogLoader_Aggregator successfully at "`date +%Y.%m.%d_%H:%M:%S` | tee -a ${MAIN_LOGFILE}
+
+  # Disable the schedule SessionLogLoader_Adapter for DWH_MONITOR
+  # --------------------------------------------------------------------------------------  
+  SESSIONLOGLOADER_ADAPTER_STATUS=`scheduler -e disable_schedule DWH_MONITOR SessionLogLoader_Adapter`
+  until [ "${SESSIONLOGLOADER_ADAPTER_STATUS}" = "Schedule SessionLogLoader_Adapter disabled successfully. Please reload scheduler for the changes to take effect." -o "${SESSIONLOGLOADER_ADAPTER_STATUS}" = "Schedule SessionLogLoader_Adapter is already disabled." ]
+    do
+  	sleep 10
+  	SESSIONLOGLOADER_ADAPTER_STATUS=`scheduler -e disable_schedule DWH_MONITOR SessionLogLoader_Adapter`
+  	echo "Disabling SessionLogLoader_Adapter"  	
+    done
+  echo "Disabled SessionLogLoader_Adapter successfully at "`date +%Y.%m.%d_%H:%M:%S` | tee -a ${MAIN_LOGFILE}
+
+  # Disable the schedule Aggregate for DWH_MONITOR
+  # --------------------------------------------------------------------------------------  
+  AGGREGATE_STATUS=`scheduler -e disable_schedule DWH_MONITOR Aggregate`
+  until [ "${AGGREGATE_STATUS}" = "Schedule Aggregate disabled successfully. Please reload scheduler for the changes to take effect." -o "${AGGREGATE_STATUS}" = "Schedule Aggregate is already disabled." ]
+    do
+  	sleep 10
+  	AGGREGATE_STATUS=`scheduler -e disable_schedule DWH_MONITOR Aggregate`
+  	echo "Disabling Aggregate"  	
+    done
+  echo "Disabled Aggregate successfully at "`date +%Y.%m.%d_%H:%M:%S` | tee -a ${MAIN_LOGFILE}
+
+  # Disable the schedule DailyReAggregation for DWH_MONITOR
+  # --------------------------------------------------------------------------------------  
+  DAILY_REAGGREGATION_STATUS=`scheduler -e disable_schedule DWH_MONITOR DailyReAggregation`
+  until [ "${DAILY_REAGGREGATION_STATUS}" = "Schedule DailyReAggregation disabled successfully. Please reload scheduler for the changes to take effect." -o "${DAILY_REAGGREGATION_STATUS}" = "Schedule DailyReAggregation is already disabled." ]
+    do
+  	sleep 10
+  	DAILY_REAGGREGATION_STATUS=`scheduler -e disable_schedule DWH_MONITOR DailyReAggregation`
+  	echo "Disabling DailyReAggregation"  	
+    done
+  echo "Disabled DailyReAggregation successfully at "`date +%Y.%m.%d_%H:%M:%S` | tee -a ${MAIN_LOGFILE}
+
+  # Disable the schedule reQueue_Queued_Aggregations for DWH_MONITOR
+  # --------------------------------------------------------------------------------------  
+  REQUEUE_QUEUED_AGGREGATIONS_STATUS=`scheduler -e disable_schedule DWH_MONITOR reQueue_Queued_Aggregations`
+  until [ "${REQUEUE_QUEUED_AGGREGATIONS_STATUS}" = "Schedule reQueue_Queued_Aggregations disabled successfully. Please reload scheduler for the changes to take effect." -o "${REQUEUE_QUEUED_AGGREGATIONS_STATUS}" = "Schedule reQueue_Queued_Aggregations is already disabled." ]
+    do
+  	sleep 10
+  	REQUEUE_QUEUED_AGGREGATIONS_STATUS=`scheduler -e disable_schedule DWH_MONITOR reQueue_Queued_Aggregations`
+  	echo "Disabling reQueue_Queued_Aggregations"  	
+    done
+  echo "Disabled reQueue_Queued_Aggregations successfully at "`date +%Y.%m.%d_%H:%M:%S` | tee -a ${MAIN_LOGFILE}
+
+
+ # ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------  
+
+  #SMF is running
+  echo "SMF is running. Setting scheduler on hold and shutting it down with SMF scripts." | tee -a ${MAIN_LOGFILE}
+  ${BIN_DIR}/scheduler hold
+  SCHEDULER_HOLD_EXIT_STATUS=$?
+
+  if [ ${SCHEDULER_HOLD_EXIT_STATUS} -ne 0 ] ; then
+    echo "Scheduler could not be set on hold. Scheduler is not running." | tee -a ${MAIN_LOGFILE}
+  else 
+    echo "Scheduler set on hold at "`date +%Y.%m.%d_%H:%M:%S` | tee -a ${MAIN_LOGFILE}
+  fi
+  
+  echo "Restarting engine before techpack installation" | tee -a ${MAIN_LOGFILE}
+  
+  #SMF is running
+  echo "SMF is running. Restarting engine with SMF scripts." | tee -a ${MAIN_LOGFILE}
+  echo "Stopping engine" | tee -a ${MAIN_LOGFILE}
+  ${BIN_DIR}/engine stop >> /dev/null 2>&1
+  
+  ENGINE_STOP_STATUS=$?
+  if [ ${ENGINE_STOP_STATUS} -ne 0 ] ; then
+    echo "Engine had running sets. Force shutdown initiated." | tee -a ${MAIN_LOGFILE}
+    ${ADMIN_BIN}/eniq_service_start_stop.bsh -s engine -a clear | tee -a ${MAIN_LOGFILE}
+	echo "Engine status cleared" | tee -a ${MAIN_LOGFILE}
+  	sleep 10
+  	${BIN_DIR}/engine -e shutdown_forceful 1> /dev/null 2> /dev/null
+  	echo "Engine forced to shutdown" | tee -a ${MAIN_LOGFILE}
+  	sleep 10
+  fi
+  
+  ENGINE_SMF_STATUS=`svcs -a | grep 'eniq/engine' | awk '{print $1}'`
+  if [ "${ENGINE_SMF_STATUS}" != "disabled" ]; then
+	echo "Engine had running sets. Force shutdown initiated." | tee -a ${MAIN_LOGFILE}
+    	${ADMIN_BIN}/eniq_service_start_stop.bsh -s engine -a clear | tee -a ${MAIN_LOGFILE}
+	echo "Engine status cleared" | tee -a ${MAIN_LOGFILE}
+  	sleep 10
+  	${BIN_DIR}/engine -e shutdown_forceful 1> /dev/null 2> /dev/null
+  	echo "Engine forced to shutdown" | tee -a ${MAIN_LOGFILE}
+  	sleep 10
+	ENGINE_SMF_STATUS=`svcs -a | grep 'eniq/engine' | awk '{print $1}'`
+	if [ "${ENGINE_SMF_STATUS}" != "disabled" ]; then
+		RETRY_COUNT=0
+		until [ "${ENGINE_SMF_STATUS}" = "online" ]
+		do
+			if [ $RETRY_COUNT -gt 30 ]; then
+				break
+			fi
+			sleep 10
+			ENGINE_SMF_STATUS=`svcs -a | grep 'eniq/engine' | awk '{print $1}'`
+			RETRY_COUNT=`expr $RETRY_COUNT + 1`
+			echo "Waiting for engine to go online" | tee -a ${MAIN_LOGFILE}
+		done
+		echo "Engine initially started" | tee -a ${MAIN_LOGFILE}
+		${BIN_DIR}/engine stop | tee -a ${MAIN_LOGFILE}
+	fi
+  fi
+  echo "Engine stopped successfully at "`date +%Y.%m.%d_%H:%M:%S` | tee -a ${MAIN_LOGFILE}
+
+  ${BIN_DIR}/engine start
+  
+  ENGINE_START_STATUS=$?
+
+  if [ ${ENGINE_START_STATUS} -ne 0 ] ; then
+    echo "Engine could not be started. Aborting techpack installation." | tee -a ${MAIN_LOGFILE}
+    #Remove the locking file
+    rm ${LOCK_FILE}
+    exit 44
+   else
+    echo "Engine restarted succesfully" | tee -a ${MAIN_LOGFILE}
+  fi
+ sleep 10
+${BIN_DIR}/scheduler hold
+SCHEDULER_HOLD_EXIT_STATUS=$?
+if [ ${SCHEDULER_HOLD_EXIT_STATUS} -ne 0 ] ; then
+ echo "Scheduler could not be set on hold. Scheduler is not running." | tee -a ${MAIN_LOGFILE}
+ else
+echo "Scheduler set on hold at "`date +%Y.%m.%d_%H:%M:%S` | tee -a ${MAIN_LOGFILE}
+fi
+ 
+  ${BIN_DIR}/scheduler start
+  
+  ENGINE_SMF_STATUS=`svcs -a | grep 'eniq/engine' | awk '{print $1}'`
+  RETRY_COUNT=0
+  until [ "${ENGINE_SMF_STATUS}" = "online" ]
+  do
+	if [ $RETRY_COUNT -gt 30 ]; then
+				break
+	fi
+		sleep 10
+		ENGINE_SMF_STATUS=`svcs -a | grep 'eniq/engine' | awk '{print $1}'`
+		RETRY_COUNT=`expr $RETRY_COUNT + 1`
+		echo "Waiting for engine to go online" | tee -a ${MAIN_LOGFILE}
+  done
+  ENGINE_INIT_STATUS=`engine status 2>&1 | egrep "Priority Queue disabled|Connection to engine refused" | wc -m | awk '{print $1}'`
+  RETRY_COUNT=0
+  until [ "${ENGINE_INIT_STATUS}" = "0" ]
+  do
+	if [ $RETRY_COUNT -gt 30 ]; then
+				break
+	fi
+		sleep 10
+		ENGINE_INIT_STATUS=`engine status 2>&1 | egrep "Priority Queue disabled|Connection to engine refused" | wc -m | awk '{print $1}'`
+  		RETRY_COUNT=`expr $RETRY_COUNT + 1`
+		echo "Waiting for engine to initialize properly" | tee -a ${MAIN_LOGFILE}
+  done
+  echo "Engine started and initialized at "`date +%Y.%m.%d_%H:%M:%S` | tee -a ${MAIN_LOGFILE}
+fi
+${BIN_DIR}/scheduler hold
+# Lock the dcbo and dcpublic user's from the dwh database during the installation or upgrade.
+${INSTALLER_DIR}/change_db_users_perm.bsh -a lock -u ALL -l ${MAIN_LOGFILE}
+
+for name in `cat ${TP_LIST_FILE}`
+do
+
+  echo "Starting to install techpack ${name}" | tee -a ${MAIN_LOGFILE}
+
+  if [ -d $INSTALLER_DIR/tp_installer_temp ] ; then
+	rm -r $INSTALLER_DIR/tp_installer_temp
+  fi
+
+  mkdir $INSTALLER_DIR/tp_installer_temp
+  mkdir $INSTALLER_DIR/tp_installer_temp/temp
+  mkdir $INSTALLER_DIR/tp_installer_temp/unzipped_tp
+
+  cp ${TP_DIR_PATH}/${name} $INSTALLER_DIR/tp_installer_temp/temp
+  TECH_PACK_FILE_PATH=""
+  TECH_PACK_FILENAME=""
+
+  TPI_FILE=`ls $INSTALLER_DIR/tp_installer_temp/temp`
+
+  for file in $TPI_FILE
+  do
+    TECH_PACK_FILENAME=$file
+  done
+
+  TP_TIMESTAMP=`date +%Y.%m.%d_%H:%M:%S`
+
+  TP_LOGFILE=${LOG_DIR}/tp_installer/${TP_TIMESTAMP}_${TECH_PACK_FILENAME}.log
+
+  touch ${TP_LOGFILE}
+
+  echo "Installing ${TECH_PACK_FILENAME}" | tee -a ${MAIN_LOGFILE}
+
+  ${RT_DIR}/ant/bin/ant -f tasks_install_utils.xml -lib ${CPATH} -logfile /tmp/unzipresult -Ddc.installer.dir=${INSTALLER_DIR} -Dcurrent_working_directory=${CURRENT_WORKING_DIRECTORY} -Dtech_pack_file_name=${TECH_PACK_FILENAME} unzip_tech_pack_file
+	
+  cat /tmp/unzipresult
+	
+  if [ -f /tmp/unzipresult ] ; then
+    SUC=`cat /tmp/unzipresult | grep "BUILD SUCCESSFUL"`
+    rm /tmp/unzipresult
+    if [ -z "${SUC}" ] ; then
+      echo "Unzipping ${TECH_PACK_FILENAME} failed." | tee -a ${MAIN_LOGFILE}
+      if [ "${CREATE_SNAPSHOTS}" = "true" ]; then
+        # Tech pack installation has failed. Restore the snapshot before the tech pack installation/upgrade.
+        rollback_snapshots 
+        # Delete the snapshots.
+        delete_snapshots 
+      fi
+      ${BIN_DIR}/engine -e changeProfile Normal
+      # Unlock the dcbo and dcpublic user's from the dwh database after the installation or upgrade.
+      ${INSTALLER_DIR}/change_db_users_perm.bsh -a unlock -u ALL -l ${MAIN_LOGFILE}
+      #Remove the locking file
+      rm ${LOCK_FILE}
+      exit 37
+    fi
+  fi
+
+  echo "Techpack extracted" | tee -a ${MAIN_LOGFILE}
+
+  # Start the actual tech pack installation/upgrade.
+  ${RT_DIR}/ant/bin/ant -f tasks_tp_installer.xml -lib ${CPATH} -logfile ${TP_LOGFILE} -Dcurrent_working_directory=${CURRENT_WORKING_DIRECTORY} -DcheckForRequiredTechPacks=${CHECK_FOR_REQUIRED_TECH_PACKS} -DforceInstall=${FORCE_INSTALL} -Dtech_pack_filename=${TECH_PACK_FILENAME} -DconfigurationDirectory=${CONF_DIR} -Ddc.platform.dir=${PLATFORM_DIR} -Ddc.installer.dir=${INSTALLER_DIR} -DbinDirectory=${BIN_DIR} -Dtpdir=${TP_DIR_PATH}
+
+  TP_INSTALLER_EXIT_STATUS=$?
+
+  if [ TP_INSTALLER_EXIT_STATUS -ne 0 ] ; then
+    if [ "${CREATE_SNAPSHOTS}" = "true" ]; then
+      # Tech pack installation has failed. Restore the snapshot before the tech pack installation/upgrade.
+      rollback_snapshots
+      # Delete the snapshots.
+      delete_snapshots 
+    fi
+    ${BIN_DIR}/engine -e changeProfile Normal
+    # Unlock the dcbo and dcpublic user's from the dwh database after the installation or upgrade.
+    ${INSTALLER_DIR}/change_db_users_perm.bsh -a unlock -u ALL -l ${MAIN_LOGFILE}
+    #Remove the locking file
+    rm ${LOCK_FILE}
+    exit 38
+  fi
+  
+  cat ${TP_LOGFILE}
+
+  if [ -f ${TP_LOGFILE} ] ; then
+    SUC=`cat ${TP_LOGFILE} | grep "BUILD SUCCESSFUL"`
+    if [ -z "${SUC}" ] ; then
+      echo "Installation failed. See log file ${TP_LOGFILE} for details." | tee -a ${MAIN_LOGFILE}
+      if [ "${CREATE_SNAPSHOTS}" = "true" ]; then
+        # Tech pack installation has failed. Restore the snapshot before the tech pack installation/upgrade.
+        rollback_snapshots
+        # Delete the snapshots.
+        delete_snapshots 
+      fi
+      ${BIN_DIR}/engine -e changeProfile Normal
+      # Unlock the dcbo and dcpublic user's from the dwh database after the installation or upgrade.
+      ${INSTALLER_DIR}/change_db_users_perm.bsh -a unlock -u ALL -l ${MAIN_LOGFILE}
+      #Remove the locking file
+      rm ${LOCK_FILE}
+      exit 39
+    fi
+  fi
+
+  echo "${TECH_PACK_FILENAME} installed succesfully" | tee -a ${MAIN_LOGFILE}
+done
+
+ if [ "${ENIQ_UPGRADE_IN_PROGRESS}" = "true" ]; then
+
+  #Enable the UpdateMonitoring in the scheduler.
+  # --------------------------------------------------------------------------------------  
+  UPDATE_MONITORING_SCHEDULE=`scheduler -e enable_schedule DWH_MONITOR UpdateMonitoring`
+  until [ "${UPDATE_MONITORING_SCHEDULE}" = "Schedule UpdateMonitoring enabled successfully. Please reload scheduler for the changes to take effect." -o "${UPDATE_MONITORING_SCHEDULE}" = "Schedule UpdateMonitoring is already enabled." ]
+    do
+  	sleep 10
+  	UPDATE_MONITORING_SCHEDULE=`scheduler -e enable_schedule DWH_MONITOR UpdateMonitoring`
+  	echo "Enabling UpdateMonitoring"  	
+    done
+  echo "Enabled UpdateMonitoring successfully at "`date +%Y.%m.%d_%H:%M:%S` | tee -a ${MAIN_LOGFILE}
+
+  #Enable the UpdateMonitoringOnStartup in the scheduler.
+  # --------------------------------------------------------------------------------------  
+  UPDATE_MONITORING_ONSTARTUP_SCHEDULE=`scheduler -e enable_schedule DWH_MONITOR UpdateMonitoringOnStartup`
+  until [ "${UPDATE_MONITORING_ONSTARTUP_SCHEDULE}" = "Schedule UpdateMonitoringOnStartup enabled successfully. Please reload scheduler for the changes to take effect." -o "${UPDATE_MONITORING_ONSTARTUP_SCHEDULE}" = "Schedule UpdateMonitoringOnStartup is already enabled." ]
+    do
+  	sleep 10
+  	UPDATE_MONITORING_ONSTARTUP_SCHEDULE=`scheduler -e enable_schedule DWH_MONITOR UpdateMonitoringOnStartup`
+  	echo "Enabling UpdateMonitoringOnStartup"  	
+    done
+  echo "Enabled UpdateMonitoringOnStartup successfully at "`date +%Y.%m.%d_%H:%M:%S` | tee -a ${MAIN_LOGFILE}
+
+  #Enable the SessionLoader_Starter in the scheduler.
+  # --------------------------------------------------------------------------------------  
+  SESSIONLOADER_STARTER_SCHEDULE=`scheduler -e enable_schedule DWH_MONITOR SessionLoader_Starter`
+  until [ "${SESSIONLOADER_STARTER_SCHEDULE}" = "Schedule SessionLoader_Starter enabled successfully. Please reload scheduler for the changes to take effect." -o "${SESSIONLOADER_STARTER_SCHEDULE}" = "Schedule SessionLoader_Starter is already enabled." ]
+    do
+  	sleep 10
+  	SESSIONLOADER_STARTER_SCHEDULE=`scheduler -e enable_schedule DWH_MONITOR SessionLoader_Starter`
+  	echo "Enabling SessionLoader_Starter"  	
+    done
+  echo "Enabled SessionLoader_Starter successfully at "`date +%Y.%m.%d_%H:%M:%S` | tee -a ${MAIN_LOGFILE}
+
+  #Enable the SessionLogLoader_Loader in the scheduler.
+  # --------------------------------------------------------------------------------------  
+  SESSIONLOGLOADER_LOADER_SCHEDULE=`scheduler -e enable_schedule DWH_MONITOR SessionLogLoader_Loader`
+  until [ "${SESSIONLOGLOADER_LOADER_SCHEDULE}" = "Schedule SessionLogLoader_Loader enabled successfully. Please reload scheduler for the changes to take effect." -o "${SESSIONLOGLOADER_LOADER_SCHEDULE}" = "Schedule SessionLogLoader_Loader is already enabled." ]
+    do
+  	sleep 10
+  	SESSIONLOGLOADER_LOADER_SCHEDULE=`scheduler -e enable_schedule DWH_MONITOR SessionLogLoader_Loader`
+  	echo "Enabling SessionLogLoader_Loader"  	
+    done
+  echo "Enabled SessionLogLoader_Loader successfully at "`date +%Y.%m.%d_%H:%M:%S` | tee -a ${MAIN_LOGFILE}
+
+  #Enable the SessionLogLoader_Aggregator in the scheduler.
+  # --------------------------------------------------------------------------------------  
+  SESSIONLOGLOADER_AGGREGATOR_SCHEDULE=`scheduler -e enable_schedule DWH_MONITOR SessionLogLoader_Aggregator`
+  until [ "${SESSIONLOGLOADER_AGGREGATOR_SCHEDULE}" = "Schedule SessionLogLoader_Aggregator enabled successfully. Please reload scheduler for the changes to take effect." -o "${SESSIONLOGLOADER_AGGREGATOR_SCHEDULE}" = "Schedule SessionLogLoader_Aggregator is already enabled." ]
+    do
+  	sleep 10
+  	SESSIONLOGLOADER_AGGREGATOR_SCHEDULE=`scheduler -e enable_schedule DWH_MONITOR SessionLogLoader_Aggregator`
+  	echo "Enabling SessionLogLoader_Aggregator"  	
+    done
+  echo "Enabled SessionLogLoader_Aggregator successfully at "`date +%Y.%m.%d_%H:%M:%S` | tee -a ${MAIN_LOGFILE}
+
+  #Enable the SessionLogLoader_Adapter in the scheduler.
+  # --------------------------------------------------------------------------------------  
+  SESSIONLOGLOADER_ADAPTER_SCHEDULE=`scheduler -e enable_schedule DWH_MONITOR SessionLogLoader_Adapter`
+  until [ "${SESSIONLOGLOADER_ADAPTER_SCHEDULE}" = "Schedule SessionLogLoader_Adapter enabled successfully. Please reload scheduler for the changes to take effect." -o "${SESSIONLOGLOADER_ADAPTER_SCHEDULE}" = "Schedule SessionLogLoader_Adapter is already enabled." ]
+    do
+  	sleep 10
+  	SESSIONLOGLOADER_ADAPTER_SCHEDULE=`scheduler -e enable_schedule DWH_MONITOR SessionLogLoader_Adapter`
+  	echo "Enabling SessionLogLoader_Adapter"  	
+    done
+  echo "Enabled SessionLogLoader_Adapter successfully at "`date +%Y.%m.%d_%H:%M:%S` | tee -a ${MAIN_LOGFILE}
+
+  #Enable the Aggregate in the scheduler.
+  # --------------------------------------------------------------------------------------  
+  AGGREGATE_SCHEDULE=`scheduler -e enable_schedule DWH_MONITOR Aggregate`
+  until [ "${AGGREGATE_SCHEDULE}" = "Schedule Aggregate enabled successfully. Please reload scheduler for the changes to take effect." -o "${AGGREGATE_SCHEDULE}" = "Schedule Aggregate is already enabled." ]
+    do
+  	sleep 10
+  	AGGREGATE_SCHEDULE=`scheduler -e enable_schedule DWH_MONITOR Aggregate`
+  	echo "Enabling Aggregate"  	
+    done
+  echo "Enabled Aggregate successfully at "`date +%Y.%m.%d_%H:%M:%S` | tee -a ${MAIN_LOGFILE}
+
+  #Enable the DailyReAggregation in the scheduler.
+  # --------------------------------------------------------------------------------------  
+  DAILY_REAGGREGATION_SCHEDULE=`scheduler -e enable_schedule DWH_MONITOR DailyReAggregation`
+  until [ "${DAILY_REAGGREGATION_SCHEDULE}" = "Schedule DailyReAggregation enabled successfully. Please reload scheduler for the changes to take effect." -o "${DAILY_REAGGREGATION_SCHEDULE}" = "Schedule DailyReAggregation is already enabled." ]
+    do
+  	sleep 10
+  	DAILY_REAGGREGATION_SCHEDULE=`scheduler -e enable_schedule DWH_MONITOR DailyReAggregation`
+  	echo "Enabling DailyReAggregation"  	
+    done
+  echo "Enabled DailyReAggregation successfully at "`date +%Y.%m.%d_%H:%M:%S` | tee -a ${MAIN_LOGFILE}
+  
+    # Enable the reQueue_Queued_Aggregations in scheduler
+  # --------------------------------------------------------------------------------------  
+  REQUEUE_QUEUED_AGGREGATIONS_SCHEDULE=`scheduler -e enable_schedule DWH_MONITOR reQueue_Queued_Aggregations`
+  until [ "${REQUEUE_QUEUED_AGGREGATIONS_SCHEDULE}" = "Schedule reQueue_Queued_Aggregations enabled successfully. Please reload scheduler for the changes to take effect." -o "${REQUEUE_QUEUED_AGGREGATIONS_SCHEDULE}" = "Schedule reQueue_Queued_Aggregations is already enabled." ]
+    do
+  	sleep 10
+  	REQUEUE_QUEUED_AGGREGATIONS_SCHEDULE=`scheduler -e enable_schedule DWH_MONITOR reQueue_Queued_Aggregations`
+  	echo "Enabling reQueue_Queued_Aggregations"  	
+    done
+  echo "Enabled reQueue_Queued_Aggregations successfully at "`date +%Y.%m.%d_%H:%M:%S` | tee -a ${MAIN_LOGFILE}
+
+
+ # ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+fi
+
+#Activate the scheduler
+SCHEDULER_ACTIVATE=`scheduler activate | grep "scheduler is running OK"`
+until [ "${SCHEDULER_ACTIVATE}" = "scheduler is running OK" ]
+  do
+  	sleep 10
+  	SCHEDULER_ACTIVATE=`scheduler activate | grep "scheduler is running OK"`
+  	echo "Activating scheduler."  	
+  done
+echo "Activated scheduler successfully at "`date +%Y.%m.%d_%H:%M:%S` | tee -a ${MAIN_LOGFILE}
+
+# Unlock the dcbo and dcpublic user's from the dwh database after the installation or upgrade.
+${INSTALLER_DIR}/change_db_users_perm.bsh -a unlock -u ALL -l ${MAIN_LOGFILE}
+
+if [ "${CREATE_SNAPSHOTS}" = "true" ]; then
+  echo "Deleting the snapshots created before tech packs installation." | tee -a ${MAIN_LOGFILE}
+
+  # At the end delete the snapshots.
+  delete_snapshots
+
+  echo "Deleted snapshots succesfully. Tech packs installation finished." | tee -a ${MAIN_LOGFILE}
+fi
+
+### Resetting the query plan option to 20.
+echo "Resetting the max_plans_cached value to default 20"
+${SYBASE_IQ_ISQL_PATH} -Udba -Psql -Sdwhdb <<EOISQLA
+set option public.max_plans_cached=20
+go
+quit
+EOISQLA
+echo "Changed the max_plans_cached default 20"
+### End of resetting db option
+
+#Remove the locking file
+rm ${LOCK_FILE}

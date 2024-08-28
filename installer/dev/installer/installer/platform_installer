@@ -1,0 +1,150 @@
+#!/bin/sh
+# ----------------------------------------------------------------------
+# Ericsson Network IQ Platform installer script
+#
+# Usage: platform_installer [-v] [-f] [-m|-u] PACKAGE
+#
+# ----------------------------------------------------------------------
+# Copyright (c) 1999 - 2007 AB LM Ericsson Oy  All rights reserved.
+# ----------------------------------------------------------------------
+
+VERBOSE=0
+FORCE="no"
+PACKAGE=""
+MIGRATE="no"
+HELP=0
+
+while [ -n "$*" ]
+do
+   if [ "$1" = "-v" ]
+   then
+      VERBOSE=1
+   elif [ "$1" = "-f" ]  
+   then
+      FORCE="force"
+   elif [ "$1" = "-m" ]
+   then
+      MIGRATE="migrate"
+   elif [ "$1" = "-u" ]
+   then
+      MIGRATE="update"
+   elif [ "$1" = "-help" ]
+   then
+      HELP=1
+   else
+      PACKAGE=$1
+   fi
+   shift
+done
+
+if [ "${HELP}" = 1 ]
+then
+   echo "Usage: platform_installer [-v] [-f] [-m|-u] PACKAGE"
+   echo "Options:"
+   echo "  -v  verbose output"
+   echo "  -f  skip dependency check"
+   echo "  -m  This is used only when migrating the repository data from Sybase IQ to Sybase Anywhere"
+   echo "  -u  This is used only when updating the repdb in Sybase IQ with the"
+   echo "      intention of later performing the Migration of the data (see above, -m option)"
+   exit 127
+fi
+
+if [ -z "${PACKAGE}" ] 
+then
+   echo "Usage: platform_installer [-v] [-f] [-m|-u] PACKAGE"
+   echo "Options:"
+   echo "  -v  verbose output"
+   echo "  -f  skip dependency check"
+   echo "  -m  This is used only when migrating the repository data from Sybase IQ to Sybase Anywhere"
+   echo "  -u  This is used only when updating the repdb in Sybase IQ with the"
+   echo "      intention of later performing the Migration of the data (see above, -m option)"
+   exit 127
+
+fi
+
+CURR_DIR=`pwd`
+
+if [ -z "${CONF_DIR}" ] ; then
+  echo "ERROR: CONF_DIR is not set"
+  exit 1
+fi
+
+if [ ! -r "${CONF_DIR}/niq.rc" ] ; then
+  echo "ERROR: Source file is not readable at ${CONF_DIR}/niq.rc"
+  exit 2
+fi
+
+. ${CONF_DIR}/niq.rc
+
+CPATH="${INSTALLER_DIR}/lib/installer.jar"
+
+DIRS=`ls ${PLATFORM_DIR}`
+
+for file in $DIRS
+do
+  if [ -d ${PLATFORM_DIR}/$file/dclib ]
+  then
+    JARS=`ls ${PLATFORM_DIR}/$file/dclib/*.jar`
+
+    for jar in $JARS
+    do
+      CPATH="${CPATH}:${jar}"
+    done
+  fi
+done
+
+TIMESTAMP=`date +%y.%m.%d_%H:%M:%S`
+
+LOGFILE=${LOG_DIR}/platform_installer/${PACKAGE}_${TIMESTAMP}.log
+
+HSTNAME=`hostname`
+HSTDNSNAME=`/usr/sbin/host ${HSTNAME} | /usr/bin/awk '{print $1}'`
+
+if [ $VERBOSE = 1 ] ; then
+  echo "====================================================================" | tee -a ${LOGFILE}
+  echo "  Ericsson Network IQ platform installer @ ${HSTNAME}" | tee -a ${LOGFILE}
+  echo "--------------------------------------------------------------------"  | tee -a ${LOGFILE}
+  echo " Installing: ${PACKAGE}"  | tee -a ${LOGFILE}
+  echo " Type: ${TYPE}"  | tee -a ${LOGFILE}
+  echo "===================================================================="  | tee -a ${LOGFILE}
+fi
+
+if [ ! -d ${LOG_DIR}/platform_installer ] ; then
+  mkdir -p ${LOG_DIR}/platform_installer  | tee -a ${LOGFILE}
+fi
+
+if [ -d ${INSTALLER_DIR}/tmp ] ; then
+  rm -rf ${INSTALLER_DIR}/tmp  | tee -a ${LOGFILE}
+fi
+
+mkdir -p ${INSTALLER_DIR}/tmp  | tee -a ${LOGFILE}
+
+cp $PACKAGE ${INSTALLER_DIR}/tmp  | tee -a ${LOGFILE}
+cd ${INSTALLER_DIR}/tmp; unzip ${PACKAGE}  | tee -a ${LOGFILE}
+
+if [ ! -d ${LOG_DIR}/platform_installer ]; then
+  mkdir ${LOG_DIR}/platform_installer  | tee -a ${LOGFILE}
+fi
+
+JAVA_HOME=${RT_DIR}/java
+export JAVA_HOME
+
+cd ${INSTALLER_DIR}/tmp; ${RT_DIR}/ant/bin/ant -f ${INSTALLER_DIR}/tasks_platform_installer.xml -lib ${CPATH} -Dclasspath=${CPATH} -Ddc.installer.dir=${INSTALLER_DIR} -Ddc.platform.dir=${PLATFORM_DIR} -Ddc.bin.dir=${BIN_DIR} -Ddc.runtime.dir=${RT_DIR} -Ddc.conf.dir=${CONF_DIR} -Dpmdata.dir=${PMDATA_DIR} -Darchive.dir=${ARCHIVE_DIR} -Detldata.dir=${ETLDATA_DIR} -Dreference.dir=${REFERENCE_DIR} -Drejected.dir=${REJECTED_DIR} -Ddc.admin.bin=${ADMIN_BIN} -Ddc.log.dir=${LOG_DIR} -Dforceflag=${FORCE} -Dmigrateflag=${MIGRATE} -Ddc.hostname=${HSTNAME} -Deniq.hostdnsname=${HSTDNSNAME} | tee -a ${LOGFILE}
+
+if [ -f ${LOGFILE} ] ; then
+  SUC=`cat ${LOGFILE} | grep "BUILD SUCCESSFUL"`
+  if [ ! -z "${SUC}" ] ; then
+    if [ ${MIGRATE} = "update" ] ; then
+       echo "Successfully Updated and Unloaded all tables from repdb (Sybase IQ)"  | tee -a ${LOGFILE}
+    elif [ ${MIGRATE} = "migrate" ] ; then
+       echo "Successfully Created and Loaded all tables to repdb (SQL Anywhere)"  | tee -a ${LOGFILE}
+    else
+       cd ${CURR_DIR}
+       rm -f ${PACKAGE} 
+       echo "Successfully installed"  | tee -a ${LOGFILE}
+    fi
+  else
+    echo "Installation failed"  | tee -a ${LOGFILE}
+    exit 69
+  fi
+fi

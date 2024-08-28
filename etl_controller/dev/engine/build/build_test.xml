@@ -1,0 +1,37 @@
+<project name="engine" default="test_all">
+    <property name="module.name" value="engine"/>
+    <property file="${user.home}/EniqBuild/BH/build.properties"/>
+    <property name="ant.common" value="${cc.base}/tools/ant_common"/>
+    <property file="${ant.common}/common.properties"/>
+    <property name="module.build" value="${module.engine.build}"/>
+    <property name="module.base" value="${module.engine.base}"/>
+    <property name="module.dependants" value="${module.engine.dependants}"/>
+    <import file="${ant.common}/common.xml"/>
+    <property name="tests.to.run" value="**/*Test.class"/>
+    <property name="tests.to.exclude" value="**/com/distocraft/dc5000/etl/engine/executionslots/ExecutionSlotProfileTest.class, **/com/distocraft/dc5000/etl/engine/executionslots/ExecutionSlotProfileHandlerTest.class, **/com/distocraft/dc5000/etl/engine/executionslots/ExecutionSlotProfileListTest.class, **/com/distocraft/dc5000/etl/engine/main/engineadmincommands/StartSetCommandTest.class, **/com/distocraft/dc5000/etl/engine/main/engineadmincommands/StartAndWaitSetCommandTest.class"/>
+
+    <path id="engine.lib.classpath">
+        <path refid="plaform.lib.classpath"/>
+        <path location="${module.alarm_module.pkg}"/>
+        <path location="${module.export.pkg}"/>
+        <path location="${module.dwh_manager.pkg}"/>
+        <path location="${module.ebsmanager.pkg}"/>
+        <path location="${module.monitoring.pkg}"/>
+        <path location="${module.mediation.pkg}"/>
+        <path location="${module.uncompress.pkg}"/>
+        <path location="${module.common_utilities.pkg}"/>
+        <path location="${module.repository.pkg}"/>
+        <path location="${module.scheduler.pkg}"/>
+        <path location="${module.parser.pkg}"/>
+        <path location="${module.licensing.pkg}"/>
+        <path location="${module.disk_manager.pkg}"/>
+    	<path location="${module.installer.pkg}"/>
+    </path>
+    <path id="engine.test.classpath">
+        <path refid="platform.test.classpath"/>
+        <path refid="engine.lib.classpath"/>
+         <!-- importActionTest will fail because the working dir is different....-->
+        <path location="${eniq.plat.base}/etl_controller/dev/engine/"/>
+    </path>
+</project>
+

@@ -1,0 +1,451 @@
+<project name="repository" basedir="." default="all">
+
+<target name="install" depends="copyTmpToDeploy">
+  <!-- Create rep tables by executing sql -->
+
+  <INIGet file="${dc.conf.dir}/niq.ini" section="REP" parameter="PortNumber"/>
+  <INIGet file="${dc.conf.dir}/niq.ini" section="REP" parameter="ETLREPPassword"/>
+  <INIGet file="${dc.conf.dir}/niq.ini" section="REP" parameter="DWHREPPassword"/>
+  <INIGet file="${dc.conf.dir}/niq.ini" section="DWH" parameter="PortNumber"/>
+  <INIGet file="${dc.conf.dir}/niq.ini" section="DWH" parameter="DCPassword"/>
+  <INIGet file="${dc.conf.dir}/niq.ini" section="DB" parameter="DBAPassword"/>
+
+	<!-- Copy dwhdb wrapper to /eniq/sw/bin/-->
+	<if>
+		<available file="${dc.bin.dir}/dwhdb"/>
+		<then>
+			<delete file="${dc.bin.dir}/dwhdb"/>
+		</then>
+	</if>
+	<copy file="${dc.installer.dir}/tmp/dbadmin/bin/dwhdb" toFile="${dc.bin.dir}/dwhdb"/>
+	<chmod file="${dc.bin.dir}/dwhdb" perm="751"/>
+
+	<!-- Copy repdb wrapper to /eniq/sw/bin/-->
+	<if>
+		<available file="${dc.bin.dir}/repdb"/>
+		<then>
+			<delete file="${dc.bin.dir}/repdb"/>
+		</then>
+	</if>
+	<copy file="${dc.installer.dir}/tmp/dbadmin/bin/repdb" toFile="${dc.bin.dir}/repdb"/>
+ 	<chmod file="${dc.bin.dir}/repdb" perm="751"/>
+ 
+  <if>
+    <available file="${dc.conf.dir}/ETLCServer.properties"/>
+    <then>
+      <delete file="${dc.conf.dir}/ETLCServer.properties"/>
+    </then>
+  </if>
+
+      <replace file="${dc.installer.dir}/tmp/conf/ETLCServer.properties" token="@ETLREPPASS@" value="${REP.ETLREPPassword}"/>
+      <replace file="${dc.installer.dir}/tmp/conf/ETLCServer.properties" token="@REPPORT@" value="${REP.PortNumber}"/>
+      <copy file="${dc.installer.dir}/tmp/conf/ETLCServer.properties" toFile="${dc.conf.dir}/ETLCServer.properties"/>
+
+  <replace file="${dc.installer.dir}/tmp/sql/etlrep_sybase_1.sql" token="@rep.port@" value="${REP.PortNumber}"/>
+  <replace file="${dc.installer.dir}/tmp/sql/etlrep_sybase_1.sql" token="@etlrep.password@" value="${REP.ETLREPPassword}"/>
+  <replace file="${dc.installer.dir}/tmp/sql/etlrep_sybase_1.sql" token="@dwhrep.password@" value="${REP.DWHREPPassword}"/>
+
+  <replace file="${dc.installer.dir}/tmp/sql/etlrep_sybase_1.sql" token="@dwh.port@" value="${DWH.PortNumber}"/>
+  <replace file="${dc.installer.dir}/tmp/sql/etlrep_sybase_1.sql" token="@dwh.password@" value="${DWH.DCPassword}"/>
+
+  <replace file="${dc.installer.dir}/tmp/sql/etlrep_sybase_1.sql" token="@dba.password@" value="${DB.DBAPassword}"/>
+		
+  <!-- This conditional statement makes changes to the sql files so that they can be run on either -->
+  <!-- Sybase IQ (sql is loaded into the Catalog Store) or Sybase Anywhere                         -->
+  <!-- ${migrateflag} comes from platform_installer script                                         -->
+  <if>
+      <equals arg1="${migrateflag}" arg2="update" />
+      <then>
+          <!-- Replace all occurances of @system@ to IN SYSTEM when installing on Sybase IQ15.2 -->
+          <replace dir="${dc.installer.dir}/tmp/sql/" token="@system@" value="IN SYSTEM">
+              <include name="**/*.sql"/>
+          </replace>
+      </then>
+      <else>
+          <!-- Replace all occurances of @system@ to "" when installing on SQL Anywhere -->
+          <replace dir="${dc.installer.dir}/tmp/sql/" token="@system@" value="">
+              <include name="**/*.sql"/>
+          </replace>
+      </else>      
+  </if>
+	
+	
+  <!-- This is to determine what phase of the migration we are in(1,2), if any(0) -->
+  <if>
+     <equals arg1="${migrateflag}" arg2="update" />
+     <then>
+        <property name="migratePhase"  value="1"/>
+     </then>
+     <elseif>
+        <equals arg1="${migrateflag}" arg2="migrate" />
+        <then>
+          <property name="migratePhase"  value="2"/>
+        </then>
+     </elseif>
+     <else>
+       <property name="migratePhase"  value="0"/>
+     </else>
+  </if>
+     
+  <antcall target="run_one_sql">
+    <param name="dbname" value="etlrep"/>
+    <param name="sqlfile" value="etlrep_sybase_1.sql"/>
+  </antcall>
+
+  <antcall target="run_one_sql">
+	<param name="dbname" value="etlrep"/>
+	<param name="sqlfile" value="etlrep_sybase_2.sql"/>
+  </antcall>
+	
+  <antcall target="run_one_sql">
+    <param name="dbname" value="etlrep"/>
+    <param name="sqlfile" value="etlrep_sybase_3.sql"/>
+  </antcall>
+	
+  <antcall target="run_one_sql">
+    <param name="dbname" value="etlrep"/>
+	<param name="sqlfile" value="etlrep_sybase_4.sql"/>
+  </antcall>
+	
+  <antcall target="run_one_sql">
+	    <param name="dbname" value="etlrep"/>
+		<param name="sqlfile" value="etlrep_sybase_5.sql"/>
+  </antcall>
+	
+  <antcall target="run_one_sql">
+	    <param name="dbname" value="etlrep"/>
+		<param name="sqlfile" value="etlrep_sybase_6.sql"/>
+  </antcall>
+	
+  <antcall target="run_one_sql">
+	    <param name="dbname" value="etlrep"/>
+		<param name="sqlfile" value="etlrep_sybase_7.sql"/>
+  </antcall>
+	
+  <antcall target="run_one_sql">
+    <param name="dbname" value="dwhrep"/>
+    <param name="sqlfile" value="dwhrep_sybase_1.sql"/>
+  </antcall>
+
+  <antcall target="run_one_sql">
+    <param name="dbname" value="dwhrep"/>
+    <param name="sqlfile" value="dwhrep_sybase_2.sql"/>
+  </antcall>
+
+  <antcall target="run_one_sql">
+    <param name="dbname" value="dwhrep"/>
+    <param name="sqlfile" value="dwhrep_sybase_3.sql"/>
+  </antcall>
+
+  <antcall target="run_one_sql">
+	<param name="dbname" value="dwhrep"/>
+	<param name="sqlfile" value="dwhrep_sybase_4.sql"/>
+  </antcall>
+
+  <antcall target="run_one_sql">
+        <param name="dbname" value="dwhrep"/>
+        <param name="sqlfile" value="dwhrep_sybase_5.sql"/>
+  </antcall>
+
+  <antcall target="run_one_sql">
+    	 <param name="dbname" value="dwhrep"/>
+    	 <param name="sqlfile" value="dwhrep_sybase_6.sql"/>
+  </antcall>
+	
+  <antcall target="run_one_sql">
+	   	 <param name="dbname" value="dwhrep"/>
+	     <param name="sqlfile" value="dwhrep_sybase_7.sql"/>
+  </antcall>
+
+  <antcall target="run_one_sql">
+		 <param name="dbname" value="dwhrep"/>
+	     <param name="sqlfile" value="dwhrep_sybase_8.sql"/>
+  </antcall>
+		
+  <antcall target="run_one_sql">
+		  <param name="dbname" value="dwhrep"/>
+		  <param name="sqlfile" value="dwhrep_sybase_9.sql"/>
+  </antcall>
+	
+  <antcall target="run_one_sql">
+		  <param name="dbname" value="dwhrep"/>
+		  <param name="sqlfile" value="dwhrep_sybase_10.sql"/>
+  </antcall>
+	
+  <antcall target="run_one_sql">
+		  <param name="dbname" value="dwhrep"/>
+		  <param name="sqlfile" value="dwhrep_sybase_11.sql"/>
+  </antcall>
+	
+  <antcall target="run_one_sql">
+		   <param name="dbname" value="dwhrep"/>
+		   <param name="sqlfile" value="dwhrep_sybase_12.sql"/>
+  </antcall>
+	
+  <antcall target="run_one_sql">
+		   <param name="dbname" value="dwhrep"/>
+		   <param name="sqlfile" value="dwhrep_sybase_13.sql"/>
+  </antcall>
+	
+  <antcall target="run_one_sql">
+		<param name="dbname" value="dwhrep"/>
+		<param name="sqlfile" value="dwhrep_sybase_14.sql"/>
+  </antcall>
+
+	  <antcall target="run_one_sql">
+			<param name="dbname" value="dwhrep"/>
+			<param name="sqlfile" value="dwhrep_sybase_15.sql"/>
+	  </antcall>
+
+	  <antcall target="run_one_sql">
+			<param name="dbname" value="dwhrep"/>
+			<param name="sqlfile" value="dwhrep_sybase_16.sql"/>
+	  </antcall>
+	
+	  <antcall target="run_one_sql">
+			<param name="dbname" value="dwhrep"/>
+			<param name="sqlfile" value="dwhrep_sybase_17.sql"/>
+	  </antcall>
+
+	  <antcall target="run_one_sql">
+			<param name="dbname" value="dwhrep"/>
+			<param name="sqlfile" value="dwhrep_sybase_18.sql"/>
+	  </antcall>
+	
+	  <antcall target="run_one_sql">
+			<param name="dbname" value="dwhrep"/>
+			<param name="sqlfile" value="dwhrep_sybase_19.sql"/>
+	  </antcall>
+	
+	  <antcall target="run_one_sql">
+			<param name="dbname" value="dwhrep"/>
+			<param name="sqlfile" value="dwhrep_sybase_20.sql"/>
+	  </antcall>
+
+	  <antcall target="run_one_sql">
+			<param name="dbname" value="dwhrep"/>
+			<param name="sqlfile" value="dwhrep_sybase_21.sql"/>
+	  </antcall>
+	
+	  <antcall target="run_one_sql">
+			<param name="dbname" value="dwhrep"/>
+			<param name="sqlfile" value="dwhrep_sybase_22.sql"/>
+	  </antcall>
+	
+	  <antcall target="run_one_sql">
+			<param name="dbname" value="dwhrep"/>
+			<param name="sqlfile" value="dwhrep_sybase_23.sql"/>
+	  </antcall>
+	
+	  <antcall target="run_one_sql">
+			<param name="dbname" value="dwhrep"/>
+			<param name="sqlfile" value="dwhrep_sybase_24.sql"/>
+	  </antcall>
+
+	  <antcall target="run_one_sql">
+			<param name="dbname" value="dwhrep"/>
+			<param name="sqlfile" value="dwhrep_sybase_25.sql"/>
+	  </antcall>
+
+	  <antcall target="run_one_sql">
+			<param name="dbname" value="dwhrep"/>
+			<param name="sqlfile" value="dwhrep_sybase_26.sql"/>
+	  </antcall>
+	
+	  <antcall target="run_one_sql">
+			<param name="dbname" value="dwhrep"/>
+			<param name="sqlfile" value="dwhrep_sybase_27.sql"/>
+	  </antcall>
+	  
+	  <antcall target="run_one_sql">
+			<param name="dbname" value="dwhrep"/>
+			<param name="sqlfile" value="dwhrep_sybase_28.sql"/>
+	  </antcall>
+
+	  <antcall target="run_one_sql">
+			<param name="dbname" value="dwhrep"/>
+			<param name="sqlfile" value="dwhrep_sybase_29.sql"/>
+  	  </antcall>
+
+	  <antcall target="run_one_sql">
+			<param name="dbname" value="dwhrep"/>
+			<param name="sqlfile" value="dwhrep_sybase_30.sql"/>
+  	  </antcall>
+  	  
+  	  <antcall target="run_one_sql">
+			<param name="dbname" value="dwhrep"/>
+			<param name="sqlfile" value="dwhrep_sybase_31.sql"/>
+  	  </antcall>
+  
+  	  <antcall target="run_one_sql">
+			<param name="dbname" value="dwhrep"/>
+			<param name="sqlfile" value="dwhrep_sybase_32.sql"/>
+  	  </antcall>  	
+  
+  	  <antcall target="run_one_sql">
+			<param name="dbname" value="dwhrep"/>
+			<param name="sqlfile" value="dwhrep_sybase_33.sql"/>
+  	  </antcall>  
+  
+  	  <antcall target="run_one_sql">
+			<param name="dbname" value="dwhrep"/>
+			<param name="sqlfile" value="dwhrep_sybase_34.sql"/>
+  	  </antcall> 	  
+  
+  	  <antcall target="run_one_sql">
+			<param name="dbname" value="dwhrep"/>
+			<param name="sqlfile" value="dwhrep_sybase_35.sql"/>
+  	  </antcall>
+	
+	  <antcall target="run_one_sql">
+			<param name="dbname" value="dwhrep"/>
+			<param name="sqlfile" value="dwhrep_sybase_36.sql"/>
+	  </antcall>
+	
+	  <antcall target="run_one_sql">
+			<param name="dbname" value="dwhrep"/>
+			<param name="sqlfile" value="dwhrep_sybase_37.sql"/>
+	  </antcall> 
+
+	  <antcall target="run_one_sql">
+			<param name="dbname" value="dwhrep"/>
+			<param name="sqlfile" value="dwhrep_sybase_38.sql"/>
+	  </antcall> 
+	
+	  <antcall target="run_one_sql">
+			<param name="dbname" value="dwhrep"/>
+			<param name="sqlfile" value="dwhrep_sybase_39.sql"/>
+	  </antcall> 
+	
+	  <antcall target="run_one_sql">
+			<param name="dbname" value="dwhrep"/>
+			<param name="sqlfile" value="dwhrep_sybase_40.sql"/>
+	  </antcall>
+
+	  <antcall target="run_one_sql">
+			<param name="dbname" value="dwhrep"/>
+			<param name="sqlfile" value="dwhrep_sybase_41.sql"/>
+	  </antcall>
+	  
+	  <antcall target="run_one_sql">
+			<param name="dbname" value="dwhrep"/>
+			<param name="sqlfile" value="dwhrep_sybase_42.sql"/>
+	  </antcall> 
+	  <antcall target="run_one_sql">
+			<param name="dbname" value="dwhrep"/>
+			<param name="sqlfile" value="dwhrep_sybase_43.sql"/>
+	  </antcall>
+	  <antcall target="run_one_sql">
+			<param name="dbname" value="dwhrep"/>
+			<param name="sqlfile" value="dwhrep_sybase_44.sql"/>
+	  </antcall>  
+	  <antcall target="run_one_sql">
+			<param name="dbname" value="dwhrep"/>
+			<param name="sqlfile" value="dwhrep_sybase_45.sql"/>
+	  </antcall>  
+	
+  <!-- All Alter FK SQLs must be included here              -->
+  <!-- These sql must only be run during an initial install -->
+  <if>
+    <equals arg1="${migratePhase}" arg2="0" />
+    <then>
+      <!-- add all FK constraints to etlrep -->
+      <antcall target="run_one_sql">
+        <param name="dbname" value="etlrep"/>
+        <param name="sqlfile" value="etlrep_alter_sybase_1.sql"/>
+      </antcall>
+
+      <!-- add all FK constraints to dwhrep -->
+      <antcall target="run_one_sql">
+        <param name="dbname" value="dwhrep"/>
+        <param name="sqlfile" value="dwhrep_alter_sybase_1.sql"/>
+      </antcall>
+    </then>
+  </if>
+  
+  
+    
+	<if>
+		<available file="${dc.runtime.dir}/tomcat/webapps/adminui/WEB-INF/lib"/>
+		<then>
+			<delete>
+				<fileset dir="${dc.runtime.dir}/tomcat/webapps/adminui/WEB-INF/lib" includes="repository.jar"/>
+			</delete>
+			<copy todir="${dc.runtime.dir}/tomcat/webapps/adminui/WEB-INF/lib" flatten="true">
+				<fileset dir="${dc.platform.dir}">
+					<include name="**/dclib/repository.jar"/>
+				</fileset>
+			</copy>
+		</then>
+	<else/>
+	</if>
+	
+	<if>
+		<available file="${dc.runtime.dir}/tomcat/webapps/universeupdateinstaller/WEB-INF/lib"/>
+		<then>
+			<delete>
+				<fileset dir="${dc.runtime.dir}/tomcat/webapps/universeupdateinstaller/WEB-INF/lib" includes="repository.jar"/>
+			</delete>
+			<copy todir="${dc.runtime.dir}/tomcat/webapps/universeupdateinstaller/WEB-INF/lib" flatten="true">
+				<fileset dir="${dc.platform.dir}">
+					<include name="**/dclib/repository.jar"/>
+				</fileset>
+			</copy>
+		</then>
+		<else/>
+	</if>
+	
+	<if>
+  		  <available file="${dc.runtime.dir}/tomcat/webapps/techpackide/lib/repository.jar"/>
+  		  <then>
+  			<delete file="${dc.runtime.dir}/tomcat/webapps/techpackide/lib/repository.jar"/>
+			<copy todir="${dc.runtime.dir}/tomcat/webapps/techpackide/lib" flatten="true">
+				<fileset dir="${dc.platform.dir}">
+  					<include name="**/dclib/repository.jar"/>
+  				</fileset>
+  			</copy>
+  		  </then>
+  		  <else/>
+  	 </if>
+
+	   <if>
+  		  <available file="${dc.runtime.dir}/tomcat/webapps/alarmcfg/WEB-INF/lib/repository.jar"/>
+  		  <then>
+  			<delete file="${dc.runtime.dir}/tomcat/webapps/alarmcfg/WEB-INF/lib/repository.jar"/>
+			<copy todir="${dc.runtime.dir}/tomcat/webapps/alarmcfg/WEB-INF/lib" flatten="true">
+				<fileset dir="${dc.platform.dir}">
+  					<include name="**/dclib/repository.jar"/>
+  				</fileset>
+  			</copy>
+  		  </then>
+  		  <else/>
+  	   </if>
+
+	</target>
+
+<target name="update" depends="moveToObsolete,install">
+</target>
+
+<!-- MIGRATE IQ REPOSITORY                                     -->
+<!-- This target is executed from run_inst if the migrate flag -->
+<!-- (passed from the platform_installer) = "-u" (update)      -->
+<!-- (passed from the platform_installer) = "-m" (migrate)      -->
+<target name="migrate" depends="install">
+  <INIGet file="${dc.conf.dir}/niq.ini" section="REP_MIGRATION" parameter="Location"/>
+
+  <java jvm="${dc.runtime.dir}/java/bin/java" classname="com.ericsson.eniq.repository.migrate.Migrate" fork="true" classpath="${classpath}" failonerror="true" maxmemory="64m">
+    <classpath>
+        <pathelement location="${dc.inst_dir}/classes"/>
+    </classpath>
+    <jvmarg value="-DdbUrl=jdbc:sybase:Tds:repdb:${REP.PortNumber}?SQLINITSTRING=SET TEMPORARY OPTION CONNECTION_AUTHENTICATION='Company=Ericsson;Application=ENIQ;Signature=000fa55157edb8e14d818eb4fe3db41447146f1571g539f0a8f80fd6239ea117b9d74be36c19c58dc14'"/>
+    <jvmarg value="-DLOG_DIR=/eniq/log/sw_log"/>
+    <jvmarg value="-DmigrationType=${migrateflag}"/>
+    <jvmarg value="-DdbType=sybase"/>
+    <jvmarg value="-DdriverName=com.sybase.jdbc3.jdbc.SybDriver"/>
+    <jvmarg value="-DstrUserName=DBA"/>
+    <jvmarg value="-DstrPassword=${DB.DBAPassword}"/>
+    <jvmarg value="-DmigrationPath=${REP_MIGRATION.Location}"/>
+  </java>
+</target>
+
+</project>

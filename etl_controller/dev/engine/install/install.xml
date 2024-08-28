@@ -1,0 +1,182 @@
+<project name="install" basedir="." default="all">
+
+  <property name="dcinstall.require.common" value="> 5-0-0b58"/>
+  <property name="dcinstall.require.repository" value="> 5-0-0b184"/>
+
+  <target name="install" depends="copyTmpToDeploy">
+  	
+  	<trycatch property="msg1">
+  	  <try>	
+  	    <forcedelete file="${dc.bin.dir}/engine"/>
+  	  </try>
+      <catch/>
+  	</trycatch>
+  	  	  	
+  	<mkdir dir="${dc.log.dir}/engine"/>
+  	
+  	<copy file="${dc.installer.dir}/tmp/bin/engine" toFile="${dc.bin.dir}/engine"/>
+  	<chmod perm="ug+x" file="${dc.bin.dir}/engine"/>
+
+  	<if>
+  	  <available file="${dc.admin.bin}/engine"/>
+  	  <then>
+  	    <delete file="${dc.admin.bin}/engine"/>
+  	  </then>
+  	</if>
+
+  	<copy file="${dc.installer.dir}/tmp/smf/engine" toFile="${dc.admin.bin}/engine"/>
+  	<chmod perm="ug+x" file="${dc.admin.bin}/engine"/>
+  	
+  	<if>
+  	  <available file="${dc.admin.bin}/cleanup_after_restore.bsh"/>
+  	  <then>
+  	    <delete file="${dc.admin.bin}/cleanup_after_restore.bsh"/>
+  	  </then>
+  	</if>
+
+  	<trycatch property="msg1">
+  	  <try>	
+  	    <forcedelete file="${dc.admin.bin}/disableCounters.bsh"/>
+  	    <forcedelete file="${dc.admin.bin}/disableCounters.xml"/>
+ 	  	<forcedelete file="${dc.admin.bin}/enableCounters.bsh"/>
+  	  	<forcedelete file="${dc.admin.bin}/enableCounters.xml"/>
+  	  </try>
+  	  <catch/>
+  	</trycatch>
+
+  	<copy file="${dc.installer.dir}/tmp/bin/cleanup_after_restore.bsh" toFile="${dc.admin.bin}/cleanup_after_restore.bsh"/>
+  	<chmod perm="ug+x" file="${dc.admin.bin}/cleanup_after_restore.bsh"/>
+
+  	<copy file="${dc.installer.dir}/tmp/bin/disableCounters.bsh" toFile="${dc.admin.bin}/disableCounters.bsh"/>
+  	<chmod perm="ug+x" file="${dc.admin.bin}/disableCounters.bsh"/>
+
+  	<copy file="${dc.installer.dir}/tmp/bin/disableCounters.xml" toFile="${dc.admin.bin}/disableCounters.xml"/>
+  	<chmod perm="ug+x" file="${dc.admin.bin}/disableCounters.xml"/>
+
+  	<copy file="${dc.installer.dir}/tmp/bin/enableCounters.bsh" toFile="${dc.admin.bin}/enableCounters.bsh"/>
+  	<chmod perm="ug+x" file="${dc.admin.bin}/enableCounters.bsh"/>
+  		
+  	<copy file="${dc.installer.dir}/tmp/bin/enableCounters.xml" toFile="${dc.admin.bin}/enableCounters.xml"/>
+  	<chmod perm="ug+x" file="${dc.admin.bin}/enableCounters.xml"/>
+  	
+  	<trycatch property="msg1">
+  	  <try>	
+  	    <forcedelete file="${dc.bin.dir}/copy_dst"/>
+  	  	<forcedelete file="${dc.bin.dir}/startDayOfTheWeek.bsh"/>
+  	  	<forcedelete file="${dc.bin.dir}/updateDatabase.bsh"/>
+  	    <forcedelete file="${dc.bin.dir}/updateDIM_WEEKDAY.bsh"/>
+  	    <forcedelete file="${dc.bin.dir}/updateLoggAggStatus.bsh"/>
+  	  </try>
+  	  <catch/>
+  	</trycatch>
+  	
+  	<copy file="${dc.installer.dir}/tmp/bin/copy_dst" toFile="${dc.bin.dir}/copy_dst"/>
+  	<chmod perm="ug+x" file="${dc.bin.dir}/copy_dst"/>
+  	
+  	<copy file="${dc.installer.dir}/tmp/bin/startDayOfTheWeek.bsh" toFile="${dc.bin.dir}/startDayOfTheWeek.bsh"/>
+   	<chmod perm="ug+x" file="${dc.bin.dir}/startDayOfTheWeek.bsh"/>
+  		
+  	<copy file="${dc.installer.dir}/tmp/bin/updateDatabase.bsh" toFile="${dc.bin.dir}/updateDatabase.bsh"/>
+   	<chmod perm="ug+x" file="${dc.bin.dir}/updateDatabase.bsh"/>
+  	
+  	<copy file="${dc.installer.dir}/tmp/bin/updateDIM_WEEKDAY.bsh" toFile="${dc.bin.dir}/updateDIM_WEEKDAY.bsh"/>
+   	<chmod perm="ug+x" file="${dc.bin.dir}/updateDIM_WEEKDAY.bsh"/>
+  	
+  	<copy file="${dc.installer.dir}/tmp/bin/updateLoggAggStatus.bsh" toFile="${dc.bin.dir}/updateLoggAggStatus.bsh"/>
+   	<chmod perm="ug+x" file="${dc.bin.dir}/updateLoggAggStatus.bsh"/>
+
+  	
+    <antcall target="run_one_sql">
+      <param name="dbname" value="etlrep"/>
+      <param name="sqlfile" value="executionProfile.sql"/>
+    </antcall>
+	
+    <if>
+      <available file="${dc.conf.dir}/engineLogging.properties"/>
+      <then/>
+      <else>
+        <copy file="${dc.installer.dir}/tmp/conf/engineLogging.properties" toFile="${dc.conf.dir}/engineLogging.properties"/>
+      </else>
+    </if>
+
+    <if>
+      <available file="${dc.conf.dir}/engineAdminLogging.properties"/>
+      <then/>
+      <else>
+        <copy file="${dc.installer.dir}/tmp/conf/engineAdminLogging.properties" toFile="${dc.conf.dir}/engineAdminLogging.properties"/>
+      </else>
+    </if>
+
+    <if>
+      <available file="${dc.conf.dir}/engine.log4j.properties"/>
+      <then/>
+      <else>
+        <copy file="${dc.installer.dir}/tmp/conf/engine.log4j.properties" toFile="${dc.conf.dir}/engine.log4j.properties"/>
+      </else>
+    </if>
+  	
+  	<if>
+  	  <available file="${dc.conf.dir}/static.properties"/>
+  	  <then>
+  	  	<UpdateProperties propertiesFile="${dc.conf.dir}/static.properties" action="remove" key="DuplicateCheck.default" />
+  	  	<UpdateProperties propertiesFile="${dc.conf.dir}/static.properties" action="remove" key="PriorityQueue.maxAmountOfLoadersForSameTypeInQueue" />
+  	  	<UpdateProperties propertiesFile="${dc.conf.dir}/static.properties" action="remove" key="PriorityQueue.unremovableSetTypes" />
+  	  	<UpdateProperties propertiesFile="${dc.conf.dir}/static.properties" action="remove" key="Adapter.TimestampCheck" />
+  	  	<UpdateProperties propertiesFile="${dc.conf.dir}/static.properties" action="remove" key="sybaseiq.option.public.DML_Options5" />
+  	  	<MergeProperties inputfile="${dc.installer.dir}/tmp/conf/static.part.properties" outputfile="${dc.conf.dir}/static.properties"/>
+  	  </then>
+  	</if>
+	
+  	<antcall target="run_one_sql">
+      <param name="dbname" value="etlrep"/>
+      <param name="sqlfile" value="deactivate_template_interfaces.sql"/>
+    </antcall>
+
+  	<if>
+  		<available file="${dc.runtime.dir}/tomcat/webapps/adminui/WEB-INF/lib"/>
+  		<then>
+  			<delete>
+				<fileset dir="${dc.runtime.dir}/tomcat/webapps/adminui/WEB-INF/lib" includes="engine.jar"/>
+			</delete>
+			<copy todir="${dc.runtime.dir}/tomcat/webapps/adminui/WEB-INF/lib" flatten="true">
+				<fileset dir="${dc.platform.dir}">
+  					<include name="**/dclib/engine.jar"/>
+  				</fileset>
+  			</copy>
+  		</then>
+  		<else/>
+  	</if>
+  	
+  	<if>
+  		<available file="${dc.runtime.dir}/tomcat/webapps/alarmcfg/WEB-INF/lib"/>
+  		<then>
+  			<delete>
+				<fileset dir="${dc.runtime.dir}/tomcat/webapps/alarmcfg/WEB-INF/lib" includes="engine.jar"/>
+			</delete>
+			<copy todir="${dc.runtime.dir}/tomcat/webapps/alarmcfg/WEB-INF/lib" flatten="true">
+				<fileset dir="${dc.platform.dir}">
+  					<include name="**/dclib/engine.jar"/>
+  				</fileset>
+  			</copy>
+  		</then>
+  		<else/>
+  	</if>
+  	
+  	<if>
+  		  <available file="${dc.runtime.dir}/tomcat/webapps/techpackide/lib/engine.jar"/>
+  		  <then>
+  			<delete file="${dc.runtime.dir}/tomcat/webapps/techpackide/lib/engine.jar"/>
+			<copy todir="${dc.runtime.dir}/tomcat/webapps/techpackide/lib" flatten="true">
+				<fileset dir="${dc.platform.dir}">
+  					<include name="**/dclib/engine.jar"/>
+  				</fileset>
+  			</copy>
+  		  </then>
+  		  <else/>
+  	</if>
+  		
+  </target>
+      
+  <target name="update" depends="moveToObsolete,install"/>
+
+</project>

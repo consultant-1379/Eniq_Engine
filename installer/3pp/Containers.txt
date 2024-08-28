@@ -1,0 +1,3 @@
+installer/runtime	-	ant		-	apache-ant-1.6.2-bin.tar.gz	-	vobs/eniq_3pp/apache/ant/v162/prod
+installer/runtime	-	jre_sparc	-	jre1.6.0_02.tar.gz		-	vobs/java_sun/jre_solaris/v16002/prod
+installer/runtime	-	jre_i386	-	jre1.6.0_04.tar.gz		-	vobs/java_sun/jre_x86/16004/prod

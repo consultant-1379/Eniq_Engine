@@ -1,0 +1,47 @@
+<project name="installer" default="postcompile">
+
+	<property name="pack.name" value="installer" />
+	<property name="pack.version" value="5-0-0" />
+	<!-- Attention! pack.dir have to be under tmp-dir because the actual build is done there -->
+	<property name="pack.dir" value="/vobs/eniq/design/plat/installer/dev/installer" />
+
+  <!-- ENIQ Jars -->
+  <property name="eniq.parser.dir" value="/vobs/eniq/design/plat/adapters/build/parser"/>
+  <property name="eniq.engine.dir" value="/vobs/eniq/design/plat/etl_controller/build/engine"/>
+  <property name="eniq.repository.dir" value="/vobs/eniq/design/plat/installer/build/repository"/>
+  <property name="eniq.export.dir" value="/vobs/eniq/design/plat/mediation/build/export"/>
+  <property name="eniq.licensing.dir" value="/vobs/eniq/design/plat/licensing/build/licensing"/>
+	<target name="precompile">
+	</target>
+
+	<target name="compile" depends="precompile">
+		<mkdir dir="${pack.dir}/classes" />
+		<javac srcdir="${pack.dir}/src" destdir="${pack.dir}/classes" failonerror="true" debug="off" optimize="off" deprecation="off">
+			<classpath>
+				<pathelement path="${classpath}" />
+					<fileset dir="${eniq.parser.dir}">
+				    	<include name="**/*.jar"/>
+				    </fileset>
+					<fileset dir="${eniq.engine.dir}">
+				    	<include name="**/*.jar"/>
+				    </fileset>
+					<fileset dir="${eniq.repository.dir}">
+				    	<include name="**/*.jar"/>
+			    	    </fileset>
+					<fileset dir="${eniq.export.dir}">
+				    	<include name="**/*.jar"/>
+			    	    </fileset>
+					<fileset dir="${eniq.licensing.dir}">
+				    	<include name="**/*.jar"/>
+			    </fileset>
+			</classpath>
+		</javac>
+	</target>
+
+	<target name="postcompile" depends="compile">
+		<mkdir dir="${pack.dir}/lib" />
+		<jar destfile="${pack.dir}/lib/installer.jar" basedir="${pack.dir}/classes" />
+                <delete dir="${pack.dir}/classes"/>
+		<delete dir="${pack.dir}/dclib"/>
+	</target>
+</project>

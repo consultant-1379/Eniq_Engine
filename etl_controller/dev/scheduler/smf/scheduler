@@ -1,0 +1,163 @@
+#!/bin/bash
+# ----------------------------------------------------------------------
+# Ericsson Network IQ ETLC scheduler control script for SMF to use
+#
+# Usage: scheduler start|stop
+#
+# ----------------------------------------------------------------------
+# Copyright (c) 1999 - 2007 AB Ericsson Oy  All rights reserved.
+# ----------------------------------------------------------------------
+
+unalias stop 2> /dev/null
+
+if [ -z "${CONF_DIR}" ] ; then
+  echo "ERROR: CONF_DIR is not set"
+  exit 1
+fi
+
+. ${CONF_DIR}/niq.rc
+
+_dir_=`/usr/bin/dirname $0`
+SCRIPTHOME=`cd $_dir_ 2>/dev/null && pwd || echo $_dir_`
+
+if [ -s $SCRIPTHOME/../lib/common_functions.lib ]; then
+    . $SCRIPTHOME/../lib/common_functions.lib
+else
+        echo "Could not find $SCRIPTHOME/../lib/common_functions.lib"
+        exit 63
+fi
+
+ETLC_USER=`iniget ETLC -v UserName -f ${CONF_DIR}/niq.ini`
+
+if [ ${LOGNAME} != ${ETLC_USER} ] ; then
+  echo "ETLC scheduler must be started as user ${ETLC_USER}"
+  exit 32
+fi
+
+JAVA_HOME="/eniq/sw/runtime/java"
+
+CPATH="${PLATFORM_DIR}"
+
+DIRS=`ls ${PLATFORM_DIR}`
+
+for file in ${DIRS}
+do
+  if [ -d ${PLATFORM_DIR}/${file}/dclib ]
+  then
+    JARS=`ls ${PLATFORM_DIR}/${file}/dclib/*.jar`
+
+    for jar in ${JARS}
+    do
+      CPATH="${CPATH}:${jar}"
+    done
+  fi
+done
+
+start() {
+
+  if [ ! -d ${LOG_DIR}/scheduler ] ; then
+    mkdir ${LOG_DIR}/scheduler
+  fi
+
+  LOGFILE=${LOG_DIR}/scheduler/start_scheduler_`date '+%y%m%d_%H%M%S'`.log
+
+  echo "Starting ETLC scheduler..." > ${LOGFILE}
+
+  xSCH=`ps -ef | grep java | grep "pname=ETLCScheduler" | awk '{print $2}'`
+  if [ ! -z "${xSCH}" ] ; then
+    echo "Killing previous scheduler instance in PID ${xSCH}" >> ${LOGFILE}
+    kill -9 ${xSCH} 2>&1 | tee -a ${LOGFILE}
+    echo "Previous scheduler killed" >> ${LOGFILE}
+  fi
+
+  HEAP_SIZE=`iniget ETLC -v SchedulerHeap -f ${CONF_DIR}/niq.ini`
+
+  ${JAVA_HOME}/bin/java -Dpname="ETLCScheduler" -mx${HEAP_SIZE} -Djava.util.logging.config.file=${CONF_DIR}/schedulerLogging.properties -Ddc5000.config.directory=${CONF_DIR} -DLOG_DIR=${LOG_DIR} -classpath ${CPATH} com.distocraft.dc5000.etl.scheduler.Scheduler &
+
+  echo "scheduler forked" >> ${LOGFILE}
+
+  START_COUNT=`iniget ETLC -v SchedulerStartCount -f ${CONF_DIR}/niq.ini`
+  START_DELAY=`iniget ETLC -v SchedulerStartDelay -f ${CONF_DIR}/niq.ini`
+
+  cnt=0
+
+  while [ ${cnt} -lt ${START_COUNT} ] ; do
+    sleep ${START_DELAY}
+
+    echo "Checking scheduler status..." >> ${LOGFILE}
+    ${BIN_DIR}/scheduler status >> ${LOGFILE} 2>&1
+
+    if [ $? -eq 0 ] ; then
+      echo "ETLC scheduler succesfully started" >> ${LOGFILE}
+      exit 0     
+    else
+      echo "scheduler not started yet" >> ${LOGFILE}
+      let cnt=cnt+1
+    fi
+
+  done
+
+  echo "ETLC scheduler failed to start" >> ${LOGFILE}
+
+  exit 55
+
+}
+
+stop() {
+  
+  LOGFILE=${LOG_DIR}/scheduler/stop_scheduler_`date '+%y%m%d_%H%M%S'`.log
+
+  echo "Stopping ETLC scheduler..." > ${LOGFILE}
+
+  ${JAVA_HOME}/bin/java -Dpname="SchedulerAdmin" -mx32M -Djava.util.logging.config.file=${CONF_DIR}/schedulerAdminLogging.properties -Ddc5000.config.directory=${CONF_DIR} -DLOG_DIR=${LOG_DIR} -classpath ${CPATH} com.distocraft.dc5000.etl.scheduler.SchedulerAdmin stop
+
+  echo "ETLC scheduler shutdown requested" >> ${LOGFILE}
+
+  STOP_COUNT=`iniget ETLC -v SchedulerStopCount -f ${CONF_DIR}/niq.ini`
+  STOP_DELAY=`iniget ETLC -v SchedulerStopDelay -f ${CONF_DIR}/niq.ini`
+
+  cnt=0
+
+  while [ ${cnt} -lt ${STOP_COUNT} ] ; do
+    sleep ${STOP_DELAY}
+
+    echo "Checking scheduler status..." >> ${LOGFILE}
+    ePID=`ps -ef | grep java | grep ETLCScheduler | awk '{print $2}'`
+
+    if [ -z "${ePID}" ] ; then
+      echo "ETLC scheduler shutdown is complete" >> ${LOGFILE}
+      exit 0
+    else
+      echo "scheduler is still running" >> ${LOGFILE}
+      let cnt=cnt+1
+    fi
+
+  done
+
+  ePID=`ps -ef | grep java | grep ETLCScheduler | awk '{print $2}'`
+
+  echo "ETLC scheduler refused to stop trying to kill it." >> ${LOGFILE}
+
+  if [ ! -z "${ePID}" ] ; then
+    kill -9 ${ePID}
+    echo "ETLC scheduler killed." >> ${LOGFILE}
+  else
+    echo "ELTC scheduler was dead before killing" >> ${LOGFILE}
+  fi
+
+  exit 0
+
+}
+
+case "$1" in
+start)
+      start
+      ;;
+stop)
+     stop
+     ;;
+*)
+     echo "This script shall only be used by SMF!"
+     exit 10
+     ;;
+esac

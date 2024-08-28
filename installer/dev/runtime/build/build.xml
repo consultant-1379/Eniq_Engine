@@ -1,0 +1,85 @@
+<project name="runtime" default="compile">
+
+  <property name="pack.name" value="runtime"/>
+  <property name="pack.version" value="5-0-0"/>
+  <!-- Attention! pack.dir have to be under tmp-dir because the actual build is done there --> 
+  <property name="pack.dir" value="/vobs/eniq/design/plat/installer/dev/runtime"/>
+
+  <!-- ENIQ jars -->
+  <property name="eniq.repository.dir" value="/vobs/eniq/design/plat/installer/build/repository"/>
+
+  <!-- 3PP Jars -->  
+  <property name="3pp.sybase.dir" value="/vobs/eniq/3pp/sybase/sybase_iq/v12_7/client/prod"/>
+  <property name="3pp.ant.dir" value="/vobs/eniq/3pp/apache/ant/v1_6_2/prod"/>
+  <property name="3pp.ant_contrib.dir" value="/vobs/eniq/3pp/apache/ant_contrib/v1_0b2/prod"/>
+  <property name="3pp.jre_sparc.dir" value="/vobs/eniq/3pp/java_sun/jre_solaris/v1_6_0_02/prod"/>
+  <property name="3pp.jre_i386.dir" value="/vobs/eniq/3pp/java_sun/jre_x86/v1_6_0_04/prod"/>
+
+  <target name="precompile">
+  	<mkdir dir="${pack.dir}/ant"/>
+  	<copy todir="${pack.dir}/ant">
+      	<fileset dir="${3pp.ant.dir}">
+		<include name="**/*.tar.gz"/>
+      	</fileset>
+      	</copy>
+  	<mkdir dir="${pack.dir}/jre"/>
+  	<mkdir dir="${pack.dir}/jre/i386"/>
+  	<copy todir="${pack.dir}/jre/i386">
+      	<fileset dir="${3pp.jre_i386.dir}">
+		<include name="**/*.tar.gz"/>
+      	</fileset>
+      	</copy>
+<!--	<copy file="${3pp.jre_i386.dir}/jre1.6.0_04.tar.gz" todir="${pack.dir}/jre/i386"/>-->
+  	<mkdir dir="${pack.dir}/jre/sparc"/>
+  	<copy todir="${pack.dir}/jre/sparc">
+      	<fileset dir="${3pp.jre_sparc.dir}">
+		<include name="**/*.tar.gz"/>
+      	</fileset>
+      	</copy>
+<!--	<copy file="${3pp.jre_sparc.dir}/jre1.6.0_02.tar.gz" todir="${pack.dir}/jre/sparc"/>-->
+  </target>
+  
+  <target name="compile">
+    <mkdir dir="${pack.dir}/classes"/>
+    <javac srcdir="${pack.dir}/src" destdir="${pack.dir}/classes"
+           failonerror="true"
+           debug="off"
+           optimize="off" 
+           deprecation="off">
+      <classpath>
+        <pathelement path="${classpath}"/>
+        	<fileset dir="${eniq.repository.dir}">
+				<include name="**/*.jar"/>
+		 </fileset>
+		<fileset dir="${3pp.sybase.dir}">
+				<include name="**/*.jar"/>
+		 </fileset>
+		 <fileset dir="${3pp.ant.dir}">
+				<include name="**/*.jar"/>
+		 </fileset>
+      </classpath>
+    </javac>
+    <jar destfile="${pack.dir}/ant/dc_ant.jar">
+          	<fileset dir="${pack.dir}/classes" excludes="**/ParseChangelog.class"/>
+    </jar>
+    <!--jar destfile="${pack.dir}/ant/ParseChangelog.jar">
+          	<fileset dir="${pack.dir}/classes" includes="**/ParseChangelog.class"/>
+    </jar-->
+    <copy todir="${pack.dir}/ant">
+      <fileset dir="${3pp.sybase.dir}">
+	<include name="**/*.jar"/>
+      </fileset>
+      <fileset dir="${3pp.ant_contrib.dir}">
+	<include name="**/*.jar"/>
+      </fileset>
+    </copy>
+    <delete dir="${pack.dir}/classes"/>
+    <!--<delete dir="${pack.dir}/src"/>-->
+  </target>
+
+  <target name="postcompile">
+  	<mkdir dir="${pack.dir}/install"/>
+  	<delete dir="${pack.dir}/dclib"/>
+  </target>
+
+</project>

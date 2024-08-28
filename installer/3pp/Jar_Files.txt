@@ -1,0 +1,11 @@
+installer/repository	-	common		-	common_5-0-0b104.jar	-	vobs/eniq_design/plat/common_utilities/build/common_utilities
+installer/repository	-	engine		-	engine_5-0-0b461.jar	-	vobs/eniq_design/plat/etl_controller/build/engine
+installer/repository	-	velocity	-	velocity-dep-1.2.jar	-	vobs/eniq_3pp/apache/jakarta_velocity/v12/prod
+installer/installer	-	ant		-	ant.jar		-		vobs/eniq_3pp/apache/ant/v162/prod
+installer/installer	-	engine		-	engine_5-0-0b22.jar	-	vobs/eniq_design/plat/etl_controller/build/engine
+installer/installer	-	jconn3		-	jconn3.jar		-	vobs/eniq_3pp/sybase/sybase/v127/prod/client
+installer/installer	-	parser		-	parser_5-0-0b241.jar	-	vobs/eniq_design/plat/adapters/build/parser
+installer/installer	-	repository	-	repository_5-0-0b192.jar	-	vobs/eniq_design/plat/installer/build/repositoinstaller/installer
+installer/installer	-	xerces		-	xercesImpl.jar		-	vobs/eniq_3pp/apache/xerces_parser/v262/prod
+installer/runtime	-	jconn3		-	jconn3.jar		-	vobs/eniq_3pp/sybase/sybase/v127/prod/client
+installer/runtime	-	ant_contrib	-	ant_contrib.jar		-	vobs/eniq_3pp/apache/ant_contrib/v06/prod
